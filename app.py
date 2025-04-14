@@ -61,7 +61,9 @@ if image:
 
         # Get OBB detections
         if hasattr(result, 'obb'):
+            print('here before the obb")
             obb_detections = result.obb
+            print(obb_detections) 
         else:
             st.error("No OBB detections found in results")
             st.stop()
@@ -72,6 +74,7 @@ if image:
         if coin_detections:
             # Use the first detected coin as reference
             coin = coin_detections[0]
+            print("found coin") 
             if 'xywh' in coin:
                 width_px = coin['xywh'][2]
                 height_px = coin['xywh'][3]
