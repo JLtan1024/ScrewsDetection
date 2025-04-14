@@ -41,7 +41,7 @@ CATEGORY_COLORS = {
     'short machine screw': (128, 0, 0), # Maroon
     '10sen Coin': (192, 192, 192)      # Silver
 }
-IOU_THRESHOLD = 0.3  # Increased threshold for better duplicate removal
+IOU_THRESHOLD = 0.7  # Increased threshold for better duplicate removal
 LABEL_FONT_SIZE = 30  # Significantly increased font size
 BORDER_WIDTH = 4     # Increased border width
 
