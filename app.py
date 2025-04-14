@@ -11,7 +11,7 @@ st.set_page_config(page_title="🔍 Screw Detection", layout="wide")
 @st.cache_resource
 def load_model():
     try:
-        model = YOLO("yolo11_obb_best.pt")  # Update with your model path
+        model = YOLO("yolo8_best.pt")  # Update with your model path
         return model
     except Exception as e:
         st.error(f"Error loading YOLO model: {e}")
