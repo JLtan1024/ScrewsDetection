@@ -41,7 +41,8 @@ CATEGORY_COLORS = {
     'short machine screw': (128, 0, 0),
     '10sen Coin': (192, 192, 192)
 }
-IOU_THRESHOLD = 0.9
+IOU_THRESHOLD = st.slider("IoU Threshold (NMS)", 0.0, 1.0, 0.7, step=0.05)
+
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
