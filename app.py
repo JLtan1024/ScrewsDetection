@@ -162,8 +162,9 @@ if image:
         if not results:
             st.warning("No detections found")
             st.stop()
-
+    
         result = results[0]
+        print(result.obb)
         filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
 
         # Prepare image for drawing
