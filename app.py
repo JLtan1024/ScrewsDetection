@@ -42,9 +42,74 @@ CATEGORY_COLORS = {
     'short machine screw': (128, 0, 0), # Maroon
     '10sen Coin': (192, 192, 192)      # Silver
 }
-IOU_THRESHOLD = 0.3  # Threshold for considering boxes as the same object
-LABEL_FONT_SIZE = 20  # Increased font size for labels
-BORDER_WIDTH = 3     # Increased border width for bounding boxes
+IOU_THRESHOLD = 0.5  # Increased threshold for better duplicate removal
+LABEL_FONT_SIZE = 30  # Significantly increased font size for better visibility
+BORDER_WIDTH = 4     # Increased border width for bounding boxes
+
+# Improved NMS function that works with OBB detections
+def non_max_suppression(detections, iou_threshold):
+    if len(detections) == 0:
+        return []
+    
+    # Convert detections to xyxy format
+    boxes = []
+    scores = []
+    classes = []
+    keep_detections = []
+    
+    for det in detections:
+        if len(det.xyxy) > 0:
+            box = det.xyxy[0].cpu().numpy()
+            boxes.append(box)
+            scores.append(det.conf[0].cpu().numpy())
+            classes.append(det.cls[0].cpu().numpy())
+            keep_detections.append(det)
+    
+    if len(boxes) == 0:
+        return []
+    
+    boxes = np.array(boxes)
+    scores = np.array(scores)
+    classes = np.array(classes)
+    
+    # Sort by confidence score (descending)
+    order = scores.argsort()[::-1]
+    boxes = boxes[order]
+    scores = scores[order]
+    classes = classes[order]
+    keep_detections = [keep_detections[i] for i in order]
+    
+    keep = []
+    
+    while boxes.shape[0] > 0:
+        # Keep the box with the highest score
+        keep.append(0)
+        
+        if boxes.shape[0] == 1:
+            break
+            
+        # Calculate IoU between the first box and remaining boxes
+        ious = []
+        for i in range(1, boxes.shape[0]):
+            iou = calculate_iou(boxes[0], boxes[i])
+            ious.append(iou)
+        
+        ious = np.array(ious)
+        
+        # Remove boxes with IoU > threshold and same class
+        same_class = (classes[1:] == classes[0])
+        overlap = (ious > iou_threshold)
+        remove = np.logical_and(same_class, overlap)
+        
+        # Keep boxes where remove is False
+        keep_indices = np.where(~remove)[0] + 1  # +1 because we skipped index 0
+        
+        boxes = boxes[keep_indices]
+        scores = scores[keep_indices]
+        classes = classes[keep_indices]
+        keep_detections = [keep_detections[i] for i in keep_indices]
+    
+    return [keep_detections[i] for i in keep]
 
 # Function to calculate Intersection over Union (IoU) for axis-aligned boxes
 def calculate_iou(box1, box2):
@@ -107,21 +172,38 @@ if image:
 
         result = results[0]
 
+        # Apply our improved NMS
+        filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
+
         # Prepare image for drawing with PIL
         pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
+        
+        # Try to load a larger font
         try:
-            font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)  # Use the defined font size
-        except IOError:
+            # Try different fonts that might be available
+            try:
+                font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
+            except:
+                try:
+                    font = ImageFont.truetype("LiberationSans-Regular.ttf", LABEL_FONT_SIZE)
+                except:
+                    try:
+                        font = ImageFont.truetype("DejaVuSans.ttf", LABEL_FONT_SIZE)
+                    except:
+                        # If no specific font is found, use default with increased size
+                        font = ImageFont.load_default()
+                        font.size = LABEL_FONT_SIZE
+        except Exception as e:
+            st.warning(f"Couldn't load preferred font: {e}")
             font = ImageFont.load_default()
 
         px_to_mm_ratio = None
         coin_detected = False
         detected_objects = []
-        processed_detections = []
 
         # Calculate pixel to mm ratio if coin is detected
-        for detection in result.obb:
+        for detection in filtered_detections:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
                 coin_xywhr = detection.xywhr[0]
                 width_px = coin_xywhr[2]
@@ -132,28 +214,11 @@ if image:
                     coin_detected = True
                 break  # Assuming only one coin for reference
 
-        # Non-maximum suppression (NMS) by class
-        if result.boxes is not None and len(result.boxes) > 0:
-            unique_classes = np.unique(result.boxes.cls.cpu().numpy())
-            for cls in unique_classes:
-                class_indices = (result.boxes.cls == cls).cpu().numpy()
-                class_boxes = result.boxes.xyxy.cpu().numpy()[class_indices]
-                class_conf = result.boxes.conf.cpu().numpy()[class_indices]
-                keep_indices = cv2.dnn.NMSBoxes(class_boxes.tolist(), class_conf.tolist(), 0.3, IOU_THRESHOLD)
-                if len(keep_indices) > 0:
-                    for i in keep_indices.flatten():
-                        detection = result.obb[class_indices[i]]
-                        box_xyxy = class_boxes[i]
-                        processed_detections.append((detection, box_xyxy))
-        elif result.obb is not None:
-            processed_detections = [(det, det.xyxy[0].cpu().numpy()) for det in result.obb]
-
-
-        for detection, box_xyxy in processed_detections:
+        for detection in filtered_detections:
             if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
                 class_id = int(detection.cls[0])
                 confidence = detection.conf[0]
-                x1, y1, x2, y2 = map(int, box_xyxy)
+                x1, y1, x2, y2 = map(int, detection.xyxy[0])
 
                 class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))  # Default to green
@@ -178,10 +243,15 @@ if image:
                 elif class_id == COIN_CLASS_ID:
                     label_text += ", Dia: N/A (No Ratio)"
 
-                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH) # Use the defined border width
-                draw.text((x1, y1 - LABEL_FONT_SIZE - 5), label_text, fill=(255, 255, 255), font=font) # Adjust y position
+                # Draw bounding box with thicker border
+                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
+                
+                # Draw text with background for better visibility
+                text_width, text_height = draw.textsize(label_text, font=font)
+                draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
+                draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
 
-        st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
+        st.image(pil_image, caption="Detected Objects with Info", use_column_width=True)
 
         # Beautiful and organized summary
         st.subheader("✨ Detection Summary ✨")
