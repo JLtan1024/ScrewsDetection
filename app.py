@@ -42,7 +42,7 @@ CATEGORY_COLORS = {
     'short machine screw': (128, 0, 0), # Maroon
     '10sen Coin': (192, 192, 192)      # Silver
 }
-IOU_THRESHOLD = 0.7  # Threshold for considering boxes as the same object
+IOU_THRESHOLD = 0.3  # Threshold for considering boxes as the same object
 LABEL_FONT_SIZE = 20  # Increased font size for labels
 BORDER_WIDTH = 3     # Increased border width for bounding boxes
 
