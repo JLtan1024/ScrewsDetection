@@ -54,14 +54,13 @@ def get_text_size(draw, text, font):
         return draw.textsize(text, font=font)
 
 def non_max_suppression(detections, iou_threshold):
-    """Improved NMS function for OBB detections"""
+    """Improved NMS for OBB that keeps multiple non-overlapping boxes"""
     if len(detections) == 0:
         return []
     
     boxes = []
     scores = []
     classes = []
-    keep_detections = []
     
     for det in detections:
         if len(det.xyxy) > 0:
@@ -69,62 +68,47 @@ def non_max_suppression(detections, iou_threshold):
             boxes.append(box)
             scores.append(det.conf[0].cpu().numpy())
             classes.append(det.cls[0].cpu().numpy())
-            keep_detections.append(det)
     
-    if len(boxes) == 0:
+    if not boxes:
         return []
     
     boxes = np.array(boxes)
     scores = np.array(scores)
     classes = np.array(classes)
     
-    order = scores.argsort()[::-1]
-    boxes = boxes[order]
-    scores = scores[order]
-    classes = classes[order]
-    keep_detections = [keep_detections[i] for i in order]
-    
-    keep = []
-    
-    while boxes.shape[0] > 0:
-        keep.append(0)
-        
-        if boxes.shape[0] == 1:
-            break
-            
+    indices = np.argsort(scores)[::-1]
+    keep_indices = []
+
+    while len(indices) > 0:
+        current = indices[0]
+        keep_indices.append(current)
+        rest = indices[1:]
+
         ious = []
-        for i in range(1, boxes.shape[0]):
-            box1 = boxes[0]
+        for i in rest:
+            box1 = boxes[current]
             box2 = boxes[i]
-            x_left = max(box1[0], box2[0])
-            y_top = max(box1[1], box2[1])
-            x_right = min(box1[2], box2[2])
-            y_bottom = min(box1[3], box2[3])
+            xA = max(box1[0], box2[0])
+            yA = max(box1[1], box2[1])
+            xB = min(box1[2], box2[2])
+            yB = min(box1[3], box2[3])
 
-            if x_right < x_left or y_bottom < y_top:
-                ious.append(0.0)
-                continue
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+            box1Area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+            box2Area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+            unionArea = box1Area + box2Area - interArea
 
-            intersection_area = (x_right - x_left) * (y_bottom - y_top)
-            area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
-            area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
-            union_area = area1 + area2 - intersection_area
-            iou = intersection_area / union_area if union_area > 0 else 0.0
+            iou = interArea / unionArea if unionArea > 0 else 0.0
             ious.append(iou)
         
         ious = np.array(ious)
-        same_class = (classes[1:] == classes[0])
-        overlap = (ious > iou_threshold)
-        remove = np.logical_and(same_class, overlap)
-        keep_indices = np.where(~remove)[0] + 1
-        
-        boxes = boxes[keep_indices]
-        scores = scores[keep_indices]
-        classes = classes[keep_indices]
-        keep_detections = [keep_detections[i] for i in keep_indices]
-    
-    return [keep_detections[i] for i in keep]
+        same_class = (classes[rest] == classes[current])
+        to_keep = ~(same_class & (ious > iou_threshold))
 
+        indices = rest[to_keep]
+
+    return [detections[i] for i in keep_indices]
+    
 # Initialize session state
 if 'model' not in st.session_state:
     try:
