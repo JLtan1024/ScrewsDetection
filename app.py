@@ -8,7 +8,7 @@ import cv2
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
 # Constants
-COIN_CLASS_ID = 'coin'  # 10sen coin
+COIN_CLASS_ID = 13  # 10sen coin
 COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
 
 # Initialize session state
@@ -63,7 +63,7 @@ if image:
         if hasattr(result, 'obb'):
             obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
             st.write("Raw OBB Detections:")
-            st.write(obb_detections['cls']) # Inspect the structure of obb_detections
+            st.write(obb_detections) # Inspect the structure of obb_detections
             
 
             # Calculate pixel-to-mm ratio using 10sen coin (class 13)
