@@ -40,9 +40,11 @@ CATEGORY_COLORS = {
     'large nut': (128, 128, 0),       # Olive
     'machine screw': (0, 128, 128),    # Teal
     'short machine screw': (128, 0, 0), # Maroon
-    '10sen Coin': (192, 192, 192)      # Silver
+    '10sen Coin': (150, 150, 192)      # Silver
 }
-IOU_THRESHOLD = 0.7  # Threshold for considering boxes as the same object
+IOU_THRESHOLD = 0.6  # Threshold for considering boxes as the same object
+LABEL_FONT_SIZE = 20  # Increased font size for labels
+BORDER_WIDTH = 3     # Increased border width for bounding boxes
 
 # Function to calculate Intersection over Union (IoU) for axis-aligned boxes
 def calculate_iou(box1, box2):
@@ -109,7 +111,7 @@ if image:
         pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
         try:
-            font = ImageFont.truetype("arial.ttf", 15)
+            font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)  # Use the defined font size
         except IOError:
             font = ImageFont.load_default()
 
@@ -176,8 +178,8 @@ if image:
                 elif class_id == COIN_CLASS_ID:
                     label_text += ", Dia: N/A (No Ratio)"
 
-                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=2)
-                draw.text((x1, y1 - 10), label_text, fill=(255, 255, 255), font=font)
+                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH) # Use the defined border width
+                draw.text((x1, y1 - LABEL_FONT_SIZE - 5), label_text, fill=(255, 255, 255), font=font) # Adjust y position
 
         st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
 
