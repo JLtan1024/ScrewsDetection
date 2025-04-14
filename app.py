@@ -41,7 +41,7 @@ CATEGORY_COLORS = {
     'short machine screw': (128, 0, 0),
     '10sen Coin': (192, 192, 192)
 }
-IOU_THRESHOLD = 0.3
+IOU_THRESHOLD = 0.9
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
