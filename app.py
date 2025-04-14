@@ -174,7 +174,7 @@ if image:
         detected_objects = []
 
         # Find coin for scale reference
-        for detection in filtered_detections:
+        for detection in result.obb:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
                 coin_xywhr = detection.xywhr[0]
                 width_px = coin_xywhr[2]
