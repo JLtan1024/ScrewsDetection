@@ -105,7 +105,7 @@ def non_max_suppression(detections, iou_threshold):
 # Initialize session state
 if 'model' not in st.session_state:
     try:
-        st.session_state.model = YOLO("yolo11-obb.pt")
+        st.session_state.model = YOLO("yolo11-obb12classes.pt")
     except Exception as e:
         st.error(f"Error loading YOLO OBB model: {e}")
         st.stop()
