@@ -4,6 +4,7 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import cv2
 from collections import Counter
+from scipy.spatial.distance import cdist
 
 # Set title
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
@@ -41,6 +42,28 @@ CATEGORY_COLORS = {
     'short machine screw': (128, 0, 0), # Maroon
     '10sen Coin': (192, 192, 192)      # Silver
 }
+IOU_THRESHOLD = 0.7  # Threshold for considering boxes as the same object
+
+# Function to calculate Intersection over Union (IoU) for axis-aligned boxes
+def calculate_iou(box1, box2):
+    x1_1, y1_1, x2_1, y2_1 = box1
+    x1_2, y1_2, x2_2, y2_2 = box2
+
+    x_left = max(x1_1, x1_2)
+    y_top = max(y1_1, y1_2)
+    x_right = min(x2_1, x2_2)
+    y_bottom = min(y2_1, y2_2)
+
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+
+    area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+    area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+    union_area = area1 + area2 - intersection_area
+
+    return intersection_area / union_area if union_area > 0 else 0.0
 
 # Initialize session state
 if 'model' not in st.session_state:
@@ -93,6 +116,7 @@ if image:
         px_to_mm_ratio = None
         coin_detected = False
         detected_objects = []
+        processed_detections = []
 
         # Calculate pixel to mm ratio if coin is detected
         for detection in result.obb:
@@ -106,18 +130,35 @@ if image:
                     coin_detected = True
                 break  # Assuming only one coin for reference
 
-        for detection in result.obb:
+        # Non-maximum suppression (NMS) by class
+        if result.boxes is not None and len(result.boxes) > 0:
+            unique_classes = np.unique(result.boxes.cls.cpu().numpy())
+            for cls in unique_classes:
+                class_indices = (result.boxes.cls == cls).cpu().numpy()
+                class_boxes = result.boxes.xyxy.cpu().numpy()[class_indices]
+                class_conf = result.boxes.conf.cpu().numpy()[class_indices]
+                keep_indices = cv2.dnn.NMSBoxes(class_boxes.tolist(), class_conf.tolist(), 0.3, IOU_THRESHOLD)
+                if len(keep_indices) > 0:
+                    for i in keep_indices.flatten():
+                        detection = result.obb[class_indices[i]]
+                        box_xyxy = class_boxes[i]
+                        processed_detections.append((detection, box_xyxy))
+        elif result.obb is not None:
+            processed_detections = [(det, det.xyxy[0].cpu().numpy()) for det in result.obb]
+
+
+        for detection, box_xyxy in processed_detections:
             if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
                 class_id = int(detection.cls[0])
                 confidence = detection.conf[0]
-                xyxy = detection.xyxy[0]
-                x1, y1, x2, y2 = map(int, xyxy)
+                x1, y1, x2, y2 = map(int, box_xyxy)
 
                 class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))  # Default to green
 
                 label_text = f"{class_name}"
-                detected_objects.append(class_name)
+                if class_name != CLASS_NAMES.get(COIN_CLASS_ID):
+                    detected_objects.append(class_name)
 
                 if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
                     diameter_px = (x2 - x1 + y2 - y1) / 2  # Approximate diameter from AABB
@@ -140,12 +181,15 @@ if image:
 
         st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
 
-        # Summarize the number of each type of screw detected
-        st.subheader("Detection Summary:")
+        # Beautiful and organized summary
+        st.subheader("✨ Detection Summary ✨")
         screw_counts = Counter(detected_objects)
-        for name, count in screw_counts.items():
-            if name != CLASS_NAMES.get(COIN_CLASS_ID):  # Don't count the coin
-                st.write(f"- {name}: {count}")
+        if screw_counts:
+            st.markdown("Detected the following screws/nuts:")
+            for name, count in screw_counts.items():
+                st.markdown(f"- <span style='color: {CATEGORY_COLORS.get(name, 'green')}'>{name}:</span> **{count}**", unsafe_allow_html=True)
+        else:
+            st.info("No screws or nuts detected.")
 
     except Exception as e:
         st.error(f"Error during detection or processing: {e}")
