@@ -4,7 +4,6 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import cv2
 from collections import Counter
-from scipy.spatial.distance import cdist
 
 # Set title
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
@@ -43,15 +42,22 @@ CATEGORY_COLORS = {
     '10sen Coin': (192, 192, 192)      # Silver
 }
 IOU_THRESHOLD = 0.5  # Increased threshold for better duplicate removal
-LABEL_FONT_SIZE = 30  # Significantly increased font size for better visibility
-BORDER_WIDTH = 4     # Increased border width for bounding boxes
+LABEL_FONT_SIZE = 30  # Significantly increased font size
+BORDER_WIDTH = 4     # Increased border width
 
-# Improved NMS function that works with OBB detections
+def get_text_size(draw, text, font):
+    """Helper function to get text size that works with newer PIL versions"""
+    if hasattr(draw, 'textbbox'):  # Newer PIL versions
+        bbox = draw.textbbox((0, 0), text, font=font)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    else:  # Older PIL versions
+        return draw.textsize(text, font=font)
+
 def non_max_suppression(detections, iou_threshold):
+    """Improved NMS function for OBB detections"""
     if len(detections) == 0:
         return []
     
-    # Convert detections to xyxy format
     boxes = []
     scores = []
     classes = []
@@ -72,7 +78,6 @@ def non_max_suppression(detections, iou_threshold):
     scores = np.array(scores)
     classes = np.array(classes)
     
-    # Sort by confidence score (descending)
     order = scores.argsort()[::-1]
     boxes = boxes[order]
     scores = scores[order]
@@ -82,27 +87,36 @@ def non_max_suppression(detections, iou_threshold):
     keep = []
     
     while boxes.shape[0] > 0:
-        # Keep the box with the highest score
         keep.append(0)
         
         if boxes.shape[0] == 1:
             break
             
-        # Calculate IoU between the first box and remaining boxes
         ious = []
         for i in range(1, boxes.shape[0]):
-            iou = calculate_iou(boxes[0], boxes[i])
+            box1 = boxes[0]
+            box2 = boxes[i]
+            x_left = max(box1[0], box2[0])
+            y_top = max(box1[1], box2[1])
+            x_right = min(box1[2], box2[2])
+            y_bottom = min(box1[3], box2[3])
+
+            if x_right < x_left or y_bottom < y_top:
+                ious.append(0.0)
+                continue
+
+            intersection_area = (x_right - x_left) * (y_bottom - y_top)
+            area1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
+            area2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
+            union_area = area1 + area2 - intersection_area
+            iou = intersection_area / union_area if union_area > 0 else 0.0
             ious.append(iou)
         
         ious = np.array(ious)
-        
-        # Remove boxes with IoU > threshold and same class
         same_class = (classes[1:] == classes[0])
         overlap = (ious > iou_threshold)
         remove = np.logical_and(same_class, overlap)
-        
-        # Keep boxes where remove is False
-        keep_indices = np.where(~remove)[0] + 1  # +1 because we skipped index 0
+        keep_indices = np.where(~remove)[0] + 1
         
         boxes = boxes[keep_indices]
         scores = scores[keep_indices]
@@ -110,27 +124,6 @@ def non_max_suppression(detections, iou_threshold):
         keep_detections = [keep_detections[i] for i in keep_indices]
     
     return [keep_detections[i] for i in keep]
-
-# Function to calculate Intersection over Union (IoU) for axis-aligned boxes
-def calculate_iou(box1, box2):
-    x1_1, y1_1, x2_1, y2_1 = box1
-    x1_2, y1_2, x2_2, y2_2 = box2
-
-    x_left = max(x1_1, x1_2)
-    y_top = max(y1_1, y1_2)
-    x_right = min(x2_1, x2_2)
-    y_bottom = min(y2_1, y2_2)
-
-    if x_right < x_left or y_bottom < y_top:
-        return 0.0
-
-    intersection_area = (x_right - x_left) * (y_bottom - y_top)
-
-    area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
-    area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
-    union_area = area1 + area2 - intersection_area
-
-    return intersection_area / union_area if union_area > 0 else 0.0
 
 # Initialize session state
 if 'model' not in st.session_state:
@@ -171,38 +164,32 @@ if image:
             st.stop()
 
         result = results[0]
-
-        # Apply our improved NMS
         filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
 
-        # Prepare image for drawing with PIL
+        # Prepare image for drawing
         pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
         
-        # Try to load a larger font
+        # Font handling with fallbacks
         try:
-            # Try different fonts that might be available
+            font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
+        except:
             try:
-                font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
+                font = ImageFont.truetype("LiberationSans-Regular.ttf", LABEL_FONT_SIZE)
             except:
                 try:
-                    font = ImageFont.truetype("LiberationSans-Regular.ttf", LABEL_FONT_SIZE)
+                    font = ImageFont.truetype("DejaVuSans.ttf", LABEL_FONT_SIZE)
                 except:
-                    try:
-                        font = ImageFont.truetype("DejaVuSans.ttf", LABEL_FONT_SIZE)
-                    except:
-                        # If no specific font is found, use default with increased size
-                        font = ImageFont.load_default()
+                    font = ImageFont.load_default()
+                    # Scale up default font
+                    if hasattr(font, 'size'):
                         font.size = LABEL_FONT_SIZE
-        except Exception as e:
-            st.warning(f"Couldn't load preferred font: {e}")
-            font = ImageFont.load_default()
 
         px_to_mm_ratio = None
         coin_detected = False
         detected_objects = []
 
-        # Calculate pixel to mm ratio if coin is detected
+        # Find coin for scale reference
         for detection in filtered_detections:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
                 coin_xywhr = detection.xywhr[0]
@@ -212,8 +199,9 @@ if image:
                 if avg_px_diameter > 0:
                     px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
                     coin_detected = True
-                break  # Assuming only one coin for reference
+                break
 
+        # Draw all filtered detections
         for detection in filtered_detections:
             if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
                 class_id = int(detection.cls[0])
@@ -221,14 +209,15 @@ if image:
                 x1, y1, x2, y2 = map(int, detection.xyxy[0])
 
                 class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
-                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))  # Default to green
+                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
 
                 label_text = f"{class_name}"
                 if class_name != CLASS_NAMES.get(COIN_CLASS_ID):
                     detected_objects.append(class_name)
 
+                # Add measurements if coin was detected
                 if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
-                    diameter_px = (x2 - x1 + y2 - y1) / 2  # Approximate diameter from AABB
+                    diameter_px = (x2 - x1 + y2 - y1) / 2
                     diameter_mm = diameter_px * px_to_mm_ratio
                     label_text += f", Dia: {diameter_mm:.2f}mm"
                 elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
@@ -243,17 +232,30 @@ if image:
                 elif class_id == COIN_CLASS_ID:
                     label_text += ", Dia: N/A (No Ratio)"
 
-                # Draw bounding box with thicker border
+                # Draw bounding box
                 draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
                 
-                # Draw text with background for better visibility
-                text_width, text_height = draw.textsize(label_text, font=font)
-                draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
-                draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
+                # Get text size using our helper function
+                text_width, text_height = get_text_size(draw, label_text, font)
+                
+                # Draw text background
+                draw.rectangle(
+                    [(x1, y1 - text_height - 5), 
+                     (x1 + text_width + 5, y1)],
+                    fill=color
+                )
+                
+                # Draw text
+                draw.text(
+                    (x1 + 2, y1 - text_height - 3),
+                    label_text,
+                    fill=(255, 255, 255),
+                    font=font
+                )
 
         st.image(pil_image, caption="Detected Objects with Info", use_column_width=True)
 
-        # Beautiful and organized summary
+        # Detection summary
         st.subheader("✨ Detection Summary ✨")
         screw_counts = Counter(detected_objects)
         if screw_counts:
@@ -264,4 +266,4 @@ if image:
             st.info("No screws or nuts detected.")
 
     except Exception as e:
-        st.error(f"Error during detection or processing: {e}")
+        st.error(f"Error during detection or processing: {str(e)}")
