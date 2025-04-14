@@ -162,7 +162,7 @@ if image:
         if not results:
             st.warning("No detections found")
             st.stop()
-    
+
         result = results[0]
         filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
 
@@ -253,7 +253,8 @@ if image:
                     font=font
                 )
 
-        st.image(pil_image, caption="Detected Objects with Info", use_column_width=True)
+        # Updated to use use_container_width instead of use_column_width
+        st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
 
         # Detection summary
         st.subheader("✨ Detection Summary ✨")
