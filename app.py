@@ -11,7 +11,7 @@ st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
 # Constants
 COIN_CLASS_ID = 13  # 10sen coin
-COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
+COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
 CLASS_NAMES = {
     0: 'long lag screw',
     1: 'wood screw',
