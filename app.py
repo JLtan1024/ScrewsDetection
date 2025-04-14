@@ -159,7 +159,7 @@ if image:
                 dynamic_font_size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(object_area * FONT_SCALING_FACTOR)))
 
                 try:
-                    font = ImageFont.truetype("arial.ttf", dynamic_font_size)
+                    font = ImageFont.truetype("arial.ttf", int(dynamic_font_size))
                 except IOError:
                     font = ImageFont.load_default()
 
