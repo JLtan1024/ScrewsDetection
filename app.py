@@ -1,6 +1,7 @@
 import streamlit as st
 from ultralytics import YOLO
-from PIL import Image, ImageDraw, ImageFont  
+from PIL import Image, ImageFont  
+import PIL.ImageDraw as ImageDraw
 import numpy as np
 import cv2
 
