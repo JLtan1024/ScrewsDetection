@@ -1,4 +1,76 @@
-# Calculate pixel-to-mm ratio using 10sen coin (class 13)
+import streamlit as st
+from ultralytics import YOLO
+from PIL import Image
+import numpy as np
+import cv2
+
+# Set title
+st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
+
+# Constants
+COIN_CLASS_ID = 13  # 10sen coin
+COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
+
+# Initialize session state
+if 'model' not in st.session_state:
+    try:
+        st.session_state.model = YOLO("yolo11-obb.pt")
+    except Exception as e:
+        st.error(f"Error loading YOLO OBB model: {e}")
+        st.stop()
+
+# Image input method
+input_method = st.radio(
+    "Choose Image Input Method",
+    ("Upload Image", "Use Camera"),
+    index=0
+)
+
+# Image input based on selection
+image = None
+if input_method == "Upload Image":
+    uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+elif input_method == "Use Camera":
+    camera_input = st.camera_input("Take a Picture")
+    if camera_input is not None:
+        image = Image.open(camera_input)
+
+if image:
+    # Convert image to numpy array
+    processed_image = np.array(image)
+
+    # Run YOLO OBB detection
+    try:
+        results = st.session_state.model(processed_image)
+
+        if not results:
+            st.warning("No detections found")
+            st.stop()
+
+        result = results[0]  # Get first (and only) result
+
+        # Display detection results
+        if hasattr(result, 'plot'):
+            plotted_img = result.plot()[:, :, ::-1]  # Convert BGR to RGB
+            st.image(plotted_img, caption="YOLO v11 OBB Detection", use_container_width=True)
+        else:
+            st.error("Result object doesn't have plot method")
+            st.stop()
+
+        # Get OBB detections
+        if hasattr(result, 'obb'):
+            obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
+            st.write("Raw OBB Detections:")
+            st.write(obb_detections.shape) # Inspect the structure of obb_detections
+            st.write(obb_detections)
+            
+
+            # Calculate pixel-to-mm ratio using 10sen coin (class 13)
+            coin_detections = [det for det in obb_detections if len(det) > 5 and int(det[5]) == COIN_CLASS_ID]
+
+            # Calculate pixel-to-mm ratio using 10sen coin (class 13)
             coin_detections = [det for det in obb_detections if len(det) == 7 and int(det[6]) == COIN_CLASS_ID]
 
             if coin_detections:
@@ -41,3 +113,9 @@
                         st.warning("No screws/nuts detected (only coin found)")
             else:
                 st.warning("No 10sen coin detected - cannot calculate measurements without reference")
+        else:
+            st.error("No OBB detections found in results")
+            st.stop()
+
+    except Exception as e:
+        st.error(f"Error during detection: {str(e)}")
