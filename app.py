@@ -40,17 +40,17 @@ elif input_method == "Use Camera":
 if image:
     # Convert image to numpy array
     processed_image = np.array(image)
-    
+
     # Run YOLO OBB detection
     try:
         results = st.session_state.model(processed_image)
-        
+
         if not results:
             st.warning("No detections found")
             st.stop()
-            
+
         result = results[0]  # Get first (and only) result
-        
+
         # Display detection results
         if hasattr(result, 'plot'):
             plotted_img = result.plot()[:, :, ::-1]  # Convert BGR to RGB
@@ -62,48 +62,45 @@ if image:
         # Get OBB detections
         if hasattr(result, 'obb'):
             print("here before the obb")
-            obb_detections = result.obb
-            print(obb_detections) 
+            obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
+            print(obb_detections)
         else:
             st.error("No OBB detections found in results")
             st.stop()
 
         # Calculate pixel-to-mm ratio using 10sen coin (class 13)
-        coin_detections = [det for det in obb_detections if int(det['cls']) == COIN_CLASS_ID]
-        
+        coin_detections = [det for det in obb_detections if int(det[5]) == COIN_CLASS_ID] # Assuming class ID is at index 5
+
         if coin_detections:
             # Use the first detected coin as reference
             coin = coin_detections[0]
-            print("found coin") 
-            if 'xywh' in coin:
-                width_px = coin['xywh'][2]
-                height_px = coin['xywh'][3]
-                avg_px_diameter = (width_px + height_px) / 2
-                px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                
-                # Measure screw lengths
-                screw_lengths = []
-                for det in obb_detections:
-                    if 'cls' in det and 'xywh' in det:
-                        class_id = int(det['cls'])
-                        if class_id != COIN_CLASS_ID:  # Skip the coin
-                            width_px = det['xywh'][2]
-                            height_px = det['xywh'][3]
-                            length_px = max(width_px, height_px)
-                            length_mm = length_px * px_to_mm_ratio
-                            screw_lengths.append((class_id, length_mm))
-                
-                # Display measurements
-                st.subheader("📏 Screw Measurements:")
-                if screw_lengths:
-                    for class_id, length_mm in screw_lengths:
-                        st.write(f"Class {class_id} screw/nut length: {length_mm:.2f} mm")
-                else:
-                    st.warning("No screws/nuts detected (only coin found)")
+            print("found coin")
+            # Assuming OBB format is [x_center, y_center, width, height, angle, class_id, confidence]
+            width_px = coin[2]
+            height_px = coin[3]
+            avg_px_diameter = (width_px + height_px) / 2
+            px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+
+            # Measure screw lengths
+            screw_lengths = []
+            for det in obb_detections:
+                class_id = int(det[5]) # Assuming class ID is at index 5
+                if class_id != COIN_CLASS_ID:  # Skip the coin
+                    width_px = det[2] # Assuming width is at index 2
+                    height_px = det[3] # Assuming height is at index 3
+                    length_px = max(width_px, height_px)
+                    length_mm = length_px * px_to_mm_ratio
+                    screw_lengths.append((class_id, length_mm))
+
+            # Display measurements
+            st.subheader("📏 Screw Measurements:")
+            if screw_lengths:
+                for class_id, length_mm in screw_lengths:
+                    st.write(f"Class {class_id} screw/nut length: {length_mm:.2f} mm")
             else:
-                st.warning("Coin detection missing required 'xywh' attribute")
+                st.warning("No screws/nuts detected (only coin found)")
         else:
             st.warning("No 10sen coin detected - cannot calculate measurements without reference")
-            
+
     except Exception as e:
         st.error(f"Error during detection: {str(e)}")
