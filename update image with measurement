@@ -1,6 +1,6 @@
 import streamlit as st
 from ultralytics import YOLO
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont  
 import numpy as np
 import cv2
 
@@ -10,12 +10,21 @@ st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 # Constants
 COIN_CLASS_ID = 13  # 10sen coin
 COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
-CLASS_NAMES = {  # Replace with your actual class names
-    0: "Screw/Nut 0",
-    4: "Screw/Nut 1",
-    9: "Screw/Nut 2",
-    10: "Screw/Nut 3",
-    13: "10sen Coin"
+CLASS_NAMES = {
+    0: 'long lag screw',
+    1: 'wood screw',
+    2: 'lag wood screw',
+    3: 'short wood screw',
+    4: 'shiny screw',
+    5: 'black oxide screw',
+    6: 'nut',
+    7: 'bolt',
+    8: 'large nut',
+    9: 'nut',
+    10: 'nut',
+    11: 'machine screw',
+    12: 'short machine screw',
+    13: '10sen Coin'
 }
 
 # Initialize session state
