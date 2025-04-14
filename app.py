@@ -4,109 +4,74 @@ from PIL import Image
 import numpy as np
 import cv2
 
-# Set page config
-st.set_page_config(page_title="🔍 Screw Detection", layout="wide")
+# Set title
+st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
-# Load YOLO Model
-@st.cache_resource
-def load_model():
-    try:
-        model = YOLO("yolo8_best.pt")  # Update with your model path
-        return model
-    except Exception as e:
-        st.error(f"Error loading YOLO model: {e}")
-        return None
+# Constants
+COIN_CLASS_ID = 13  # 10sen coin
+COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
 
-# Function to preprocess image
-def preprocess_image(image):
-    image = np.array(image)
-    # Convert RGBA to RGB if necessary
-    if len(image.shape) == 3 and image.shape[2] == 4:
-        image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-    return image
+# Load YOLO OBB model
+yolo_obb_model_path = "yolo11-obb.pt"
+try:
+    yolo_obb_model = YOLO(yolo_obb_model_path)
+except Exception as e:
+    st.error(f"Error loading YOLO OBB model: {e}")
+    st.stop()
 
-# Streamlit UI
-st.title("🔍 Screw Detection and Classification")
-
-# Sidebar for additional options
-with st.sidebar:
-    st.header("Settings")
-    confidence_threshold = st.slider(
-        "Confidence Threshold", 
-        min_value=0.1, 
-        max_value=1.0, 
-        value=0.5,
-        help="Adjust the minimum confidence level for detections"
-    )
-    
-    # Choose input method
-    input_method = st.radio(
-        "Select Input Method",
-        ("Upload Image", "Use Camera"),
-        index=0
-    )
-
-# Image input based on selection
+# Image input method
+option = st.radio("Choose Image Input Method", ("Upload an Image", "Take a Photo"))
 image = None
-if input_method == "Upload Image":
-    uploaded_file = st.file_uploader(
-        "Choose an image...", 
-        type=["jpg", "png", "jpeg"],
-        help="Upload an image of screws for detection"
-    )
+
+if option == "Upload an Image":
+    uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
-else:
-    camera_input = st.camera_input("Take a picture of screws")
+elif option == "Take a Photo":
+    camera_input = st.camera_input("Take a Picture")
     if camera_input is not None:
         image = Image.open(camera_input)
 
-# Process image if available
 if image:
-    # Display original image
-    st.subheader("Original Image")
-    st.image(image, use_column_width=True)
+    # Convert image to numpy array
+    processed_image = np.array(image)
     
-    # Load model (cached)
-    model = load_model()
+    # Run YOLO OBB detection
+    yolo_obb_results = yolo_obb_model(processed_image)
     
-    if model is not None:
-        # Preprocess and predict
-        processed_image = preprocess_image(image)
+    # Display detection results
+    yolo_obb_image = Image.fromarray(yolo_obb_results[0].plot()[:, :, ::-1])
+    st.image(yolo_obb_image, caption="YOLO v11 OBB Detection", use_column_width=True)
+
+    # Calculate pixel-to-mm ratio using 10sen coin (class 13)
+    obb_detections = yolo_obb_results[0].obb
+    coin_detections = [det for det in obb_detections if int(det['cls']) == COIN_CLASS_ID]
+    
+    if coin_detections:
+        # Use the first detected coin as reference
+        coin = coin_detections[0]
+        width_px = coin['xywh'][2]
+        height_px = coin['xywh'][3]
+        avg_px_diameter = (width_px + height_px) / 2
+        px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
         
-        # Make predictions
-        with st.spinner("Detecting screws..."):
-            results = model(processed_image, conf=confidence_threshold)
-            
-            # Plot results
-            plotted_image = results[0].plot()[:, :, ::-1]  # Convert BGR to RGB
-            
-            # Display results
-            st.subheader("Detection Results")
-            st.image(plotted_image, use_column_width=True)
-            
-            # Show detection details
-            st.subheader("Detection Details")
-            
-            # Get detection information
-            boxes = results[0].boxes
-            if len(boxes) > 0:
-                # Create a table with detection info
-                detection_data = []
-                for i, box in enumerate(boxes):
-                    detection_data.append({
-                        "Screw #": i+1,
-                        "Class": model.names[int(box.cls)],
-                        "Confidence": f"{float(box.conf):.2f}",
-                        "Position": f"({int(box.xyxy[0][0])}, {int(box.xyxy[0][1])})"
-                    })
-                
-                # Display as table
-                st.table(detection_data)
-                
-                # Summary statistics
-                st.write(f"**Total screws detected:** {len(boxes)}")
-            else:
-                st.warning("No screws detected in the image.")
+        # Measure screw lengths
+        screw_lengths = []
+        for det in obb_detections:
+            class_id = int(det['cls'])
+            if class_id != COIN_CLASS_ID:  # Skip the coin
+                width_px = det['xywh'][2]
+                height_px = det['xywh'][3]
+                length_px = max(width_px, height_px)
+                length_mm = length_px * px_to_mm_ratio
+                screw_lengths.append((class_id, length_mm))
+        
+        # Display measurements
+        st.subheader("📏 Screw Measurements:")
+        if screw_lengths:
+            for class_id, length_mm in screw_lengths:
+                st.write(f"Class {class_id} screw/nut length: {length_mm:.2f} mm")
+        else:
+            st.warning("No screws/nuts detected (only coin found)")
     else:
-        st.error("Model failed to load. Please check the model file.")
+        st.warning("No 10sen coin detected - cannot calculate measurements without reference")
