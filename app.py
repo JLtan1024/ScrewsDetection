@@ -28,54 +28,51 @@ CLASS_NAMES = {
     13: '10sen Coin'
 }
 CATEGORY_COLORS = {
-    'long lag screw': (255, 0, 0),     # Red
-    'wood screw': (0, 255, 0),        # Green
-    'lag wood screw': (0, 0, 255),     # Blue
-    'short wood screw': (255, 255, 0),  # Yellow
-    'shiny screw': (255, 0, 255),     # Magenta
-    'black oxide screw': (0, 255, 255), # Cyan
-    'nut': (128, 0, 128),            # Purple
-    'bolt': (255, 165, 0),           # Orange
-    'large nut': (128, 128, 0),       # Olive
-    'machine screw': (0, 128, 128),    # Teal
-    'short machine screw': (128, 0, 0), # Maroon
-    '10sen Coin': (192, 192, 192)      # Silver
+    'long lag screw': (255, 0, 0),
+    'wood screw': (0, 255, 0),
+    'lag wood screw': (0, 0, 255),
+    'short wood screw': (255, 255, 0),
+    'shiny screw': (255, 0, 255),
+    'black oxide screw': (0, 255, 255),
+    'nut': (128, 0, 128),
+    'bolt': (255, 165, 0),
+    'large nut': (128, 128, 0),
+    'machine screw': (0, 128, 128),
+    'short machine screw': (128, 0, 0),
+    '10sen Coin': (192, 192, 192)
 }
-IOU_THRESHOLD = 0.7  # Increased threshold for better duplicate removal
-LABEL_FONT_SIZE = 30  # Significantly increased font size
-BORDER_WIDTH = 4     # Increased border width
+IOU_THRESHOLD = 0.7
+LABEL_FONT_SIZE = 30
+BORDER_WIDTH = 4
 
 def get_text_size(draw, text, font):
-    """Helper function to get text size that works with newer PIL versions"""
-    if hasattr(draw, 'textbbox'):  # Newer PIL versions
+    if hasattr(draw, 'textbbox'):
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
-    else:  # Older PIL versions
+    else:
         return draw.textsize(text, font=font)
 
 def non_max_suppression(detections, iou_threshold):
     """Improved NMS for OBB that keeps multiple non-overlapping boxes"""
     if len(detections) == 0:
         return []
-    
+
     boxes = []
     scores = []
     classes = []
-    
+
     for det in detections:
         if len(det.xyxy) > 0:
-            box = det.xyxy[0].cpu().numpy()
-            boxes.append(box)
+            boxes.append(det.xyxy[0].cpu().numpy())
             scores.append(det.conf[0].cpu().numpy())
             classes.append(det.cls[0].cpu().numpy())
-    
+
     if not boxes:
         return []
-    
+
     boxes = np.array(boxes)
     scores = np.array(scores)
     classes = np.array(classes)
-    
     indices = np.argsort(scores)[::-1]
     keep_indices = []
 
@@ -92,23 +89,20 @@ def non_max_suppression(detections, iou_threshold):
             yA = max(box1[1], box2[1])
             xB = min(box1[2], box2[2])
             yB = min(box1[3], box2[3])
-
             interArea = max(0, xB - xA) * max(0, yB - yA)
             box1Area = (box1[2] - box1[0]) * (box1[3] - box1[1])
             box2Area = (box2[2] - box2[0]) * (box2[3] - box2[1])
             unionArea = box1Area + box2Area - interArea
-
             iou = interArea / unionArea if unionArea > 0 else 0.0
             ious.append(iou)
-        
+
         ious = np.array(ious)
         same_class = (classes[rest] == classes[current])
         to_keep = ~(same_class & (ious > iou_threshold))
-
         indices = rest[to_keep]
 
     return [detections[i] for i in keep_indices]
-    
+
 # Initialize session state
 if 'model' not in st.session_state:
     try:
@@ -118,13 +112,7 @@ if 'model' not in st.session_state:
         st.stop()
 
 # Image input method
-input_method = st.radio(
-    "Choose Image Input Method",
-    ("Upload Image", "Use Camera"),
-    index=0
-)
-
-# Image input based on selection
+input_method = st.radio("Choose Image Input Method", ("Upload Image", "Use Camera"), index=0)
 image = None
 if input_method == "Upload Image":
     uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
@@ -136,13 +124,9 @@ elif input_method == "Use Camera":
         image = Image.open(camera_input)
 
 if image:
-    # Convert image to numpy array
     processed_image = np.array(image)
-
-    # Run YOLO OBB detection
     try:
         results = st.session_state.model(processed_image)
-
         if not results:
             st.warning("No detections found")
             st.stop()
@@ -150,11 +134,8 @@ if image:
         result = results[0]
         filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
 
-        # Prepare image for drawing
         pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
-        
-        # Font handling with fallbacks
         try:
             font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
         except:
@@ -165,7 +146,6 @@ if image:
                     font = ImageFont.truetype("DejaVuSans.ttf", LABEL_FONT_SIZE)
                 except:
                     font = ImageFont.load_default()
-                    # Scale up default font
                     if hasattr(font, 'size'):
                         font.size = LABEL_FONT_SIZE
 
@@ -173,8 +153,8 @@ if image:
         coin_detected = False
         detected_objects = []
 
-        # Find coin for scale reference
-        for detection in result.obb:
+        # Find coin for scaling
+        for detection in filtered_detections:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
                 coin_xywhr = detection.xywhr[0]
                 width_px = coin_xywhr[2]
@@ -185,26 +165,23 @@ if image:
                     coin_detected = True
                 break
 
-        # Draw all filtered detections
         for detection in filtered_detections:
             if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
                 class_id = int(detection.cls[0])
                 confidence = detection.conf[0]
                 x1, y1, x2, y2 = map(int, detection.xyxy[0])
-
-                class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
+                class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
 
                 label_text = f"{class_name}"
-                if class_name != CLASS_NAMES.get(COIN_CLASS_ID):
+                if class_id != COIN_CLASS_ID:
                     detected_objects.append(class_name)
 
-                # Add measurements if coin was detected
-                if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
+                if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio:
                     diameter_px = (x2 - x1 + y2 - y1) / 2
                     diameter_mm = diameter_px * px_to_mm_ratio
                     label_text += f", Dia: {diameter_mm:.2f}mm"
-                elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
+                elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio:
                     xywhr = detection.xywhr[0]
                     width_px = xywhr[2]
                     height_px = xywhr[3]
@@ -216,37 +193,20 @@ if image:
                 elif class_id == COIN_CLASS_ID:
                     label_text += ", Dia: N/A (No Ratio)"
 
-                # Draw bounding box
                 draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
-                
-                # Get text size using our helper function
                 text_width, text_height = get_text_size(draw, label_text, font)
-                
-                # Draw text background
-                draw.rectangle(
-                    [(x1, y1 - text_height - 5), 
-                     (x1 + text_width + 5, y1)],
-                    fill=color
-                )
-                
-                # Draw text
-                draw.text(
-                    (x1 + 2, y1 - text_height - 3),
-                    label_text,
-                    fill=(255, 255, 255),
-                    font=font
-                )
+                draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
+                draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
 
-        # Updated to use use_container_width instead of use_column_width
         st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
 
-        # Detection summary
         st.subheader("✨ Detection Summary ✨")
         screw_counts = Counter(detected_objects)
         if screw_counts:
             st.markdown("Detected the following screws/nuts:")
             for name, count in screw_counts.items():
-                st.markdown(f"- <span style='color: {CATEGORY_COLORS.get(name, 'green')}'>{name}:</span> **{count}**", unsafe_allow_html=True)
+                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
+                st.markdown(f"- <span style='color: {color}'>{name}:</span> **{count}**", unsafe_allow_html=True)
         else:
             st.info("No screws or nuts detected.")
 
