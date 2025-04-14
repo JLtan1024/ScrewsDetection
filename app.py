@@ -1,4 +1,4 @@
-import streamlit as st
+7.import streamlit as st
 from ultralytics import YOLO
 from PIL import Image
 import numpy as np
@@ -64,6 +64,7 @@ if image:
             obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
             st.write("Raw OBB Detections:")
             st.write(obb_detections[0]) # Inspect the structure of obb_detections
+            st.write(obb_detections[0].shape)
             st.write(obb_detections)
             
 
