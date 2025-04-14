@@ -10,6 +10,13 @@ st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 # Constants
 COIN_CLASS_ID = 13  # 10sen coin
 COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
+CLASS_NAMES = {  # Replace with your actual class names
+    0: "Screw/Nut 0",
+    4: "Screw/Nut 1",
+    9: "Screw/Nut 2",
+    10: "Screw/Nut 3",
+    13: "10sen Coin"
+}
 
 # Initialize session state
 if 'model' not in st.session_state:
@@ -49,64 +56,61 @@ if image:
             st.warning("No detections found")
             st.stop()
 
-        result = results[0]  # Get first (and only) set of results for the image
+        result = results[0]
 
-        # Display detection results with bounding boxes and labels
-        if hasattr(result, 'plot'):
-            plotted_img = result.plot()[:, :, ::-1]  # Convert BGR to RGB
-            st.image(plotted_img, caption="YOLO v11 OBB Detection", use_container_width=True)
-        else:
-            st.error("Result object doesn't have plot method")
-            st.stop()
+        # Prepare image for drawing with PIL
+        pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_image)
+        try:
+            font = ImageFont.truetype("arial.ttf", 15)
+        except IOError:
+            font = ImageFont.load_default()
 
-        # Get OBB detections (list of OBB objects)
-        obb_detections = result.obb
-        st.write("Raw OBB Detections:")
-        st.write(obb_detections)
+        px_to_mm_ratio = None
+        coin_detected = False
 
-        coin_detection = None
-        other_detections = []
-
-        # Separate coin and other detections
-        for detection in obb_detections:
-            if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID:
-                coin_detection = detection
-            elif len(detection.cls) > 0:
-                other_detections.append(detection)
-
-        if coin_detection:
-            # Calculate pixel-to-mm ratio using the coin
-            if len(coin_detection.xywhr) > 0:
-                coin_xywhr = coin_detection.xywhr[0]
+        # Calculate pixel to mm ratio if coin is detected
+        for detection in result.obb:
+            if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
+                coin_xywhr = detection.xywhr[0]
                 width_px = coin_xywhr[2]
                 height_px = coin_xywhr[3]
                 avg_px_diameter = (width_px + height_px) / 2
                 if avg_px_diameter > 0:
                     px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                    st.write(f"Pixel to mm ratio: {px_to_mm_ratio:.4f}")
+                    coin_detected = True
+                break  # Assuming only one coin for reference
 
-                    # Measure other objects (screws/nuts)
-                    st.subheader("📏 Screw/Nut Measurements:")
-                    if other_detections:
-                        for detection in other_detections:
-                            if len(detection.cls) > 0 and len(detection.xywhr) > 0:
-                                class_id = int(detection.cls[0])
-                                xywhr = detection.xywhr[0]
-                                width_px = xywhr[2]
-                                height_px = xywhr[3]
-                                length_px = max(width_px, height_px)
-                                length_mm = length_px * px_to_mm_ratio
-                                st.write(f"Class {class_id} object length: {length_mm:.2f} mm (approx.)")
-                            else:
-                                st.warning("Incomplete data for a detected object.")
-                    else:
-                        st.info("No screws/nuts detected.")
-                else:
-                    st.warning("Detected coin has zero diameter, cannot calculate ratio.")
-            else:
-                st.warning("Coin detection data is incomplete.")
-        else:
-            st.warning("No 10sen coin detected - cannot calculate measurements without reference.")
+        detections_with_info = []
+        for detection in result.obb:
+            if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
+                class_id = int(detection.cls[0])
+                confidence = detection.conf[0]
+                xyxy = detection.xyxy[0]
+                x1, y1, x2, y2 = map(int, xyxy)
+                label_text = f"ID: {class_id}"
+
+                if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
+                    diameter_px = (x2 - x1 + y2 - y1) / 2  # Approximate diameter from AABB
+                    diameter_mm = diameter_px * px_to_mm_ratio
+                    label_text += f", Dia: {diameter_mm:.2f}mm"
+                elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
+                    xywhr = detection.xywhr[0]
+                    width_px = xywhr[2]
+                    height_px = xywhr[3]
+                    length_px = max(width_px, height_px)
+                    length_mm = length_px * px_to_mm_ratio
+                    label_text += f", Length: {length_mm:.2f}mm"
+                elif class_id != COIN_CLASS_ID:
+                    label_text += ", Length: N/A (No Coin)"
+                elif class_id == COIN_CLASS_ID:
+                    label_text += ", Dia: N/A (No Ratio)"
+
+                color = (0, 255, 0)  # Green for bounding boxes
+                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=2)
+                draw.text((x1, y1 - 10), label_text, fill=(255, 255, 255), font=font)
+
+        st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
 
     except Exception as e:
-        st.error(f"Error during detection: {str(e)}")
+        st.error(f"Error during detection or processing: {e}")
