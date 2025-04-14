@@ -8,7 +8,7 @@ import cv2
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
 # Constants
-COIN_CLASS_ID = 13  # 10sen coin
+COIN_CLASS_ID = 'coin'  # 10sen coin
 COIN_DIAMETER_MM = 20.60  # 10sen coin diameter in mm
 
 # Initialize session state
