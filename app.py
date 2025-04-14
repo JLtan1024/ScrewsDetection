@@ -18,14 +18,12 @@ CLASS_NAMES = {
     3: 'short wood screw',
     4: 'shiny screw',
     5: 'black oxide screw',
-    6: 'nut 1',
+    6: 'nut',
     7: 'bolt',
     8: 'large nut',
-    9: 'nut 2',
-    10: 'nut 3',
-    11: 'machine screw',
-    12: 'short machine screw',
-    13: '10sen Coin'
+    9: 'machine screw',
+    10: short machine screw',
+    11: '10sen Coin'
 }
 CATEGORY_COLORS = {
     'long lag screw': (255, 0, 0),
