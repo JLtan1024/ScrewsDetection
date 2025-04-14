@@ -63,7 +63,7 @@ if image:
         if hasattr(result, 'obb'):
             obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
             st.write("Raw OBB Detections:")
-            st.write(obb_detections[0][1]8) # Inspect the structure of obb_detections
+            st.write(obb_detections[0][1]) # Inspect the structure of obb_detections
             st.write(obb_detections)
             
 
