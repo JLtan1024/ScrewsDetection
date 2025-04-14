@@ -22,7 +22,7 @@ CLASS_NAMES = {
     7: 'bolt',
     8: 'large nut',
     9: 'machine screw',
-    10: short machine screw',
+    10: 'short machine screw',
     11: '10sen Coin'
 }
 CATEGORY_COLORS = {
