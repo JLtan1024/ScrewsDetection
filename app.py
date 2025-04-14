@@ -63,7 +63,7 @@ if image:
         if hasattr(result, 'obb'):
             print("here before the obb")
             obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
-            print(obb_detections)
+            st.write(obb_detections)
         else:
             st.error("No OBB detections found in results")
             st.stop()
@@ -72,22 +72,18 @@ if image:
         coin_detections = [det for det in obb_detections if int(det[5]) == COIN_CLASS_ID] # Assuming class ID is at index 5
 
         if coin_detections:
-            # Use the first detected coin as reference
             coin = coin_detections[0]
-            print("found coin")
-            # Assuming OBB format is [x_center, y_center, width, height, angle, class_id, confidence]
-            width_px = coin[2]
-            height_px = coin[3]
+            width_px = coin[2] - coin[0]
+            height_px = coin[3] - coin[1]
             avg_px_diameter = (width_px + height_px) / 2
             px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-
-            # Measure screw lengths
+        
             screw_lengths = []
             for det in obb_detections:
-                class_id = int(det[5]) # Assuming class ID is at index 5
-                if class_id != COIN_CLASS_ID:  # Skip the coin
-                    width_px = det[2] # Assuming width is at index 2
-                    height_px = det[3] # Assuming height is at index 3
+                class_id = int(det[5])
+                if class_id != COIN_CLASS_ID:
+                    width_px = det[2] - det[0]
+                    height_px = det[3] - det[1]
                     length_px = max(width_px, height_px)
                     length_mm = length_px * px_to_mm_ratio
                     screw_lengths.append((class_id, length_mm))
