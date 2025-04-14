@@ -164,7 +164,6 @@ if image:
             st.stop()
     
         result = results[0]
-        st.write(results.obb)
         filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
 
         # Prepare image for drawing
