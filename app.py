@@ -61,7 +61,7 @@ if image:
 
         # Get OBB detections
         if hasattr(result, 'obb'):
-            print('here before the obb")
+            print("here before the obb")
             obb_detections = result.obb
             print(obb_detections) 
         else:
