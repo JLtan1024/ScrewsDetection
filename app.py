@@ -40,11 +40,12 @@ CATEGORY_COLORS = {
     'large nut': (128, 128, 0),       # Olive
     'machine screw': (0, 128, 128),    # Teal
     'short machine screw': (128, 0, 0), # Maroon
-    '10sen Coin': (150, 150, 192)      # Silver
+    '10sen Coin': (192, 192, 192)      # Silver
 }
-IOU_THRESHOLD = 0.6  # Threshold for considering boxes as the same object
-LABEL_FONT_SIZE = 20  # Increased font size for labels
-BORDER_WIDTH = 3     # Increased border width for bounding boxes
+IOU_THRESHOLD = 0.7  # Threshold for considering boxes as the same object
+MIN_FONT_SIZE = 10
+MAX_FONT_SIZE = 30
+FONT_SCALING_FACTOR = 0.05
 
 # Function to calculate Intersection over Union (IoU) for axis-aligned boxes
 def calculate_iou(box1, box2):
@@ -110,10 +111,6 @@ if image:
         # Prepare image for drawing with PIL
         pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
-        try:
-            font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)  # Use the defined font size
-        except IOError:
-            font = ImageFont.load_default()
 
         px_to_mm_ratio = None
         coin_detected = False
@@ -154,6 +151,17 @@ if image:
                 class_id = int(detection.cls[0])
                 confidence = detection.conf[0]
                 x1, y1, x2, y2 = map(int, box_xyxy)
+                width_px = x2 - x1
+                height_px = y2 - y1
+                object_area = width_px * height_px
+
+                # Dynamic font size calculation
+                dynamic_font_size = max(MIN_FONT_SIZE, min(MAX_FONT_SIZE, int(object_area * FONT_SCALING_FACTOR)))
+
+                try:
+                    font = ImageFont.truetype("arial.ttf", dynamic_font_size)
+                except IOError:
+                    font = ImageFont.load_default()
 
                 class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))  # Default to green
@@ -168,9 +176,9 @@ if image:
                     label_text += f", Dia: {diameter_mm:.2f}mm"
                 elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio is not None:
                     xywhr = detection.xywhr[0]
-                    width_px = xywhr[2]
-                    height_px = xywhr[3]
-                    length_px = max(width_px, height_px)
+                    width_px_obb = xywhr[2]
+                    height_px_obb = xywhr[3]
+                    length_px = max(width_px_obb, height_px_obb)
                     length_mm = length_px * px_to_mm_ratio
                     label_text += f", Length: {length_mm:.2f}mm"
                 elif class_id != COIN_CLASS_ID:
@@ -178,8 +186,8 @@ if image:
                 elif class_id == COIN_CLASS_ID:
                     label_text += ", Dia: N/A (No Ratio)"
 
-                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH) # Use the defined border width
-                draw.text((x1, y1 - LABEL_FONT_SIZE - 5), label_text, fill=(255, 255, 255), font=font) # Adjust y position
+                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=3)
+                draw.text((x1, y1 - dynamic_font_size - 5), label_text, fill=(255, 255, 255), font=font)
 
         st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
 
