@@ -42,8 +42,8 @@ CATEGORY_COLORS = {
     '10sen Coin': (192, 192, 192)
 }
 IOU_THRESHOLD = 0.5
-LABEL_FONT_SIZE = 30
-BORDER_WIDTH = 4
+LABEL_FONT_SIZE = 20
+BORDER_WIDTH = 3
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
