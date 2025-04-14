@@ -63,7 +63,8 @@ if image:
         if hasattr(result, 'obb'):
             obb_detections = result.obb.cpu().numpy() # Convert to numpy array for easier indexing
             st.write("Raw OBB Detections:")
-            st.write(obb_detections) # Inspect the structure of obb_detections
+            st.write(obb_detections['cls']) # Inspect the structure of obb_detections
+            
 
             # Calculate pixel-to-mm ratio using 10sen coin (class 13)
             coin_detections = [det for det in obb_detections if len(det) > 5 and int(det[5]) == COIN_CLASS_ID]
