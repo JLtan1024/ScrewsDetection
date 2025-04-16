@@ -126,6 +126,7 @@ if image:
     processed_image = np.array(image)
     try:
         results = st.session_state.model(processed_image)
+        st.write(results)
         if not results:
             st.warning("No detections found")
             st.stop()
