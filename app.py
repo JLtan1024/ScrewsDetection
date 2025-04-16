@@ -132,6 +132,7 @@ if image:
             st.stop()
 
         result = results[0]
+    
         filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
 
         pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
@@ -155,6 +156,7 @@ if image:
 
         # Find coin for scaling
         for detection in filtered_detections:
+            st.write(detection)
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
                 coin_xywhr = detection.xywhr[0]
                 width_px = coin_xywhr[2]
