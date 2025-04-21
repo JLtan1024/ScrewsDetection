@@ -33,7 +33,7 @@ if dependency_errors:
                 import sys
                 subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
                 st.success("Dependencies installed! Please refresh the page.")
-                st.experimental_rerun()
+                st.rerun()
             except Exception as e:
                 st.error(f"Installation failed: {e}")
     st.stop()
