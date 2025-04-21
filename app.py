@@ -5,7 +5,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-import cv2
+
 # Try importing OpenCV with fallback
 try:
     import cv2
