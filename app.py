@@ -4,23 +4,40 @@ from PIL import Image, ImageDraw, ImageFont
 from collections import Counter
 import time
 import tempfile
-from ultralytics import YOLO
+dependency_errors = []
 
-# Try importing OpenCV with fallback
 try:
     import cv2
     CV2_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     CV2_AVAILABLE = False
-    st.warning("OpenCV not available - some features may be limited")
+    dependency_errors.append(f"OpenCV: {str(e)}")
 
-# Try importing YOLO
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
 except ImportError as e:
-    st.error(f"Failed to import YOLO: {e}")
     YOLO_AVAILABLE = False
+    dependency_errors.append(f"Ultralytics: {str(e)}")
+
+# Show dependency errors if any
+if dependency_errors:
+    st.error("Dependency Issues Detected:")
+    for error in dependency_errors:
+        st.error(error)
+    
+    if st.button("Attempt to install missing packages"):
+        with st.spinner("Installing dependencies..."):
+            try:
+                import subprocess
+                import sys
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+                st.success("Dependencies installed! Please refresh the page.")
+                st.experimental_rerun()
+            except Exception as e:
+                st.error(f"Installation failed: {e}")
+    st.stop()
+
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
 COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
