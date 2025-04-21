@@ -9,14 +9,39 @@ import sys
 import asyncio
 import threading
 
-# Fix for Torch/Streamlit Compatibility in Python 3.12
-if sys.version_info >= (3, 12):
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        if threading.current_thread() is threading.main_thread():
-            asyncio.set_event_loop(asyncio.new_event_loop())
+dependency_errors = []
 
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError as e:
+    CV2_AVAILABLE = False
+    dependency_errors.append(f"OpenCV: {str(e)}")
+
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError as e:
+    YOLO_AVAILABLE = False
+    dependency_errors.append(f"Ultralytics: {str(e)}")
+
+# Show dependency errors if any
+if dependency_errors:
+    st.error("Dependency Issues Detected:")
+    for error in dependency_errors:
+        st.error(error)
+    
+    if st.button("Attempt to install missing packages"):
+        with st.spinner("Installing dependencies..."):
+            try:
+                import subprocess
+                import sys
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+                st.success("Dependencies installed! Please refresh the page.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Installation failed: {e}")
+    st.stop()
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
 COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
