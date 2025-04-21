@@ -9,42 +9,17 @@ import sys
 import asyncio
 import threading
 
-dependency_errors = []
+# Fix for Torch/Streamlit compatibility in Python 3.12
+if sys.version_info >= (3, 12):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        if threading.current_thread() is threading.main_thread():
+            asyncio.set_event_loop(asyncio.new_event_loop())
 
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError as e:
-    CV2_AVAILABLE = False
-    dependency_errors.append(f"OpenCV: {str(e)}")
-
-try:
-    from ultralytics import YOLO
-    YOLO_AVAILABLE = True
-except ImportError as e:
-    YOLO_AVAILABLE = False
-    dependency_errors.append(f"Ultralytics: {str(e)}")
-
-# Show dependency errors if any
-if dependency_errors:
-    st.error("Dependency Issues Detected:")
-    for error in dependency_errors:
-        st.error(error)
-    
-    if st.button("Attempt to install missing packages"):
-        with st.spinner("Installing dependencies..."):
-            try:
-                import subprocess
-                import sys
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-                st.success("Dependencies installed! Please refresh the page.")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Installation failed: {e}")
-    st.stop()
 # Constants
-COIN_CLASS_ID = 11  # 10sen coin
-COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
+COIN_CLASS_ID = 11
+COIN_DIAMETER_MM = 18.80
 CLASS_NAMES = {
     0: 'long lag screw',
     1: 'wood screw',
@@ -76,28 +51,25 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize model with error handling
-@st.cache_resource
-def load_model():
+# Initialize session state
+if 'model' not in st.session_state:
     try:
-        model = YOLO("yolo11-obb12classes.pt")
-        # Warm-up inference
-        dummy_input = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
-        _ = model(dummy_input)
-        return model
+        st.session_state.model = YOLO("yolo11-obb12classes.pt")
+        # Warm-up the model
+        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
+        _ = st.session_state.model(dummy)
     except Exception as e:
-        st.error(f"Model initialization failed: {e}")
+        st.error(f"Model initialization failed: {str(e)}")
         st.stop()
 
-try:
-    from ultralytics import YOLO
-    model = load_model()
-except ImportError as e:
-    st.error(f"Failed to import YOLO: {e}")
-    st.stop()
-
-# Streamlit UI
-st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
+if 'cap' not in st.session_state:
+    st.session_state.cap = None
+if 'running' not in st.session_state:
+    st.session_state.running = False
+if 'px_to_mm_ratio' not in st.session_state:
+    st.session_state.px_to_mm_ratio = None
+if 'detected_objects' not in st.session_state:
+    st.session_state.detected_objects = []
 
 # Sidebar controls
 with st.sidebar:
@@ -177,11 +149,11 @@ def non_max_suppression(detections, iou_threshold):
 
     return [detections[i] for i in keep_indices]
 
-def process_frame(frame, model, px_to_mm_ratio=None):
-    results = model(frame, conf=CONFIDENCE_THRESHOLD)
+def process_frame(frame):
+    results = st.session_state.model(frame, conf=CONFIDENCE_THRESHOLD)
     
     if not results:
-        return frame, [], px_to_mm_ratio
+        return frame, []
     
     result = results[0]
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
@@ -196,11 +168,10 @@ def process_frame(frame, model, px_to_mm_ratio=None):
         if hasattr(font, 'size'):
             font.size = LABEL_FONT_SIZE
 
-    detected_objects = []
-    current_px_to_mm_ratio = px_to_mm_ratio
+    current_detections = []
     
     # Find coin for scaling
-    if current_px_to_mm_ratio is None:
+    if st.session_state.px_to_mm_ratio is None:
         for detection in filtered_detections:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
                 coin_xywhr = detection.xywhr[0]
@@ -208,7 +179,7 @@ def process_frame(frame, model, px_to_mm_ratio=None):
                 height_px = coin_xywhr[3]
                 avg_px_diameter = (width_px + height_px) / 2
                 if avg_px_diameter > 0:
-                    current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+                    st.session_state.px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
                 break
 
     # Draw detections
@@ -222,18 +193,18 @@ def process_frame(frame, model, px_to_mm_ratio=None):
 
             label_text = f"{class_name} {confidence:.2f}"
             if class_id != COIN_CLASS_ID:
-                detected_objects.append(class_name)
+                current_detections.append(class_name)
 
-            if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
+            if class_id == COIN_CLASS_ID and st.session_state.px_to_mm_ratio:
                 diameter_px = (x2 - x1 + y2 - y1) / 2
-                diameter_mm = diameter_px * current_px_to_mm_ratio
+                diameter_mm = diameter_px * st.session_state.px_to_mm_ratio
                 label_text += f", Dia: {diameter_mm:.2f}mm"
-            elif class_id != COIN_CLASS_ID and current_px_to_mm_ratio:
+            elif class_id != COIN_CLASS_ID and st.session_state.px_to_mm_ratio:
                 xywhr = detection.xywhr[0]
                 width_px = xywhr[2]
                 height_px = xywhr[3]
                 length_px = max(width_px, height_px)
-                length_mm = length_px * current_px_to_mm_ratio
+                length_mm = length_px * st.session_state.px_to_mm_ratio
                 label_text += f", Length: {length_mm:.2f}mm"
 
             if SHOW_DETECTIONS:
@@ -242,7 +213,39 @@ def process_frame(frame, model, px_to_mm_ratio=None):
                 draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
                 draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
 
-    return np.array(pil_image), detected_objects, current_px_to_mm_ratio
+    return np.array(pil_image), current_detections
+
+# Main app
+st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
+
+# Webcam control buttons
+col1, col2 = st.columns(2)
+with col1:
+    start_button = st.button("Start Webcam")
+with col2:
+    stop_button = st.button("Stop Webcam")
+
+if start_button and input_method == "Webcam":
+    try:
+        st.session_state.cap = cv2.VideoCapture(0)
+        if not st.session_state.cap.isOpened():
+            st.error("Failed to open webcam. Trying alternative method...")
+            st.session_state.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        
+        st.session_state.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
+        st.session_state.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
+        st.session_state.running = True
+        st.session_state.px_to_mm_ratio = None
+        st.session_state.detected_objects = []
+    except Exception as e:
+        st.error(f"Webcam initialization failed: {str(e)}")
+        st.session_state.running = False
+
+if stop_button:
+    if st.session_state.cap is not None:
+        st.session_state.cap.release()
+        st.session_state.cap = None
+    st.session_state.running = False
 
 # Main processing
 frame_placeholder = st.empty()
@@ -253,7 +256,7 @@ if input_method == "Upload Image":
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
         frame = np.array(image)
-        processed_frame, detected_objects, _ = process_frame(frame, model)
+        processed_frame, detected_objects = process_frame(frame)
         frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
         
         if SHOW_SUMMARY and detected_objects:
@@ -271,22 +274,22 @@ elif input_method == "Upload Video":
         tfile.write(uploaded_video.read())
         
         cap = cv2.VideoCapture(tfile.name)
-        px_to_mm_ratio = None
-        all_detected_objects = []
+        st.session_state.px_to_mm_ratio = None
+        st.session_state.detected_objects = []
         
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
                 
-            processed_frame, detected_objects, px_to_mm_ratio = process_frame(frame, model, px_to_mm_ratio)
+            processed_frame, detected_objects = process_frame(frame)
             if detected_objects:
-                all_detected_objects.extend(detected_objects)
+                st.session_state.detected_objects.extend(detected_objects)
             
             frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
             
-            if SHOW_SUMMARY and all_detected_objects:
-                screw_counts = Counter(all_detected_objects)
+            if SHOW_SUMMARY and st.session_state.detected_objects:
+                screw_counts = Counter(st.session_state.detected_objects)
                 summary_text = "### ✨ Detection Summary ✨\n"
                 for name, count in screw_counts.items():
                     color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
@@ -297,20 +300,11 @@ elif input_method == "Upload Video":
             
         cap.release()
 
-elif input_method == "Webcam":
-    if 'cap' not in st.session_state or st.session_state.cap is None:
-        st.session_state.cap = cv2.VideoCapture(0)
-        st.session_state.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-        st.session_state.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
-    
-    stop_button = st.button("Stop Webcam")
-    
-    px_to_mm_ratio = None
-    all_detected_objects = []
+elif input_method == "Webcam" and st.session_state.running and st.session_state.cap is not None:
     fps = 0
     prev_time = 0
     
-    while st.session_state.cap.isOpened() and not stop_button:
+    while st.session_state.running and st.session_state.cap.isOpened():
         ret, frame = st.session_state.cap.read()
         if not ret:
             st.error("Failed to capture frame")
@@ -320,9 +314,9 @@ elif input_method == "Webcam":
         fps = 1 / (current_time - prev_time)
         prev_time = current_time
         
-        processed_frame, detected_objects, px_to_mm_ratio = process_frame(frame, model, px_to_mm_ratio)
+        processed_frame, detected_objects = process_frame(frame)
         if detected_objects:
-            all_detected_objects.extend(detected_objects)
+            st.session_state.detected_objects.extend(detected_objects)
         
         if SHOW_FPS:
             cv2.putText(
@@ -337,8 +331,8 @@ elif input_method == "Webcam":
         
         frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
         
-        if SHOW_SUMMARY and all_detected_objects:
-            screw_counts = Counter(all_detected_objects)
+        if SHOW_SUMMARY and st.session_state.detected_objects:
+            screw_counts = Counter(st.session_state.detected_objects)
             summary_text = "### ✨ Detection Summary ✨\n"
             for name, count in screw_counts.items():
                 color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
@@ -346,9 +340,9 @@ elif input_method == "Webcam":
             summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
         
         time.sleep(0.033)  # ~30fps
-    
-    if st.session_state.cap is not None:
-        st.session_state.cap.release()
-        st.session_state.cap = None
-    st.success("Webcam stopped")
-    
+
+# Cleanup when changing input methods
+if input_method != "Webcam" and st.session_state.cap is not None:
+    st.session_state.cap.release()
+    st.session_state.cap = None
+    st.session_state.running = False
