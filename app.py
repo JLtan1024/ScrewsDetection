@@ -1,11 +1,11 @@
 import streamlit as st
-import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
+import cv2
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
