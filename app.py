@@ -4,9 +4,11 @@ from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import cv2
 from collections import Counter
+import av
+from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 
 # Set title
-st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
+st.title("🔍 Real-Time Screw Detection and Measurement (YOLOv11 OBB)")
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -43,6 +45,11 @@ IOU_THRESHOLD = st.slider("IoU Threshold (NMS)", 0.0, 1.0, 0.7, step=0.05)
 
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
+
+# WebRTC configuration
+RTC_CONFIGURATION = RTCConfiguration(
+    {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+)
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
@@ -110,107 +117,123 @@ if 'model' not in st.session_state:
         st.error(f"Error loading YOLO OBB model: {e}")
         st.stop()
 
-# Image input method
-input_method = st.radio("Choose Image Input Method", ("Upload Image", "Use Camera"), index=0)
-image = None
-if input_method == "Upload Image":
-    uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-elif input_method == "Use Camera":
-    camera_input = st.camera_input("Take a Picture")
-    if camera_input is not None:
-        image = Image.open(camera_input)
+# Initialize detection summary in session state
+if 'detection_summary' not in st.session_state:
+    st.session_state.detection_summary = Counter()
 
-if image:
-    processed_image = np.array(image)
+# Initialize font
+try:
+    font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
+except:
     try:
-        results = st.session_state.model(processed_image)
-        st.write(results)
-        if not results:
-            st.warning("No detections found")
-            st.stop()
-
-        result = results[0]
-    
-        filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
-
-        pil_image = Image.fromarray(cv2.cvtColor(processed_image, cv2.COLOR_BGR2RGB))
-        draw = ImageDraw.Draw(pil_image)
+        font = ImageFont.truetype("LiberationSans-Regular.ttf", LABEL_FONT_SIZE)
+    except:
         try:
-            font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
+            font = ImageFont.truetype("DejaVuSans.ttf", LABEL_FONT_SIZE)
         except:
-            try:
-                font = ImageFont.truetype("LiberationSans-Regular.ttf", LABEL_FONT_SIZE)
-            except:
-                try:
-                    font = ImageFont.truetype("DejaVuSans.ttf", LABEL_FONT_SIZE)
-                except:
-                    font = ImageFont.load_default()
-                    if hasattr(font, 'size'):
-                        font.size = LABEL_FONT_SIZE
+            font = ImageFont.load_default()
+            if hasattr(font, 'size'):
+                font.size = LABEL_FONT_SIZE
 
-        px_to_mm_ratio = None
-        coin_detected = False
-        detected_objects = []
+def process_frame(frame):
+    img = frame.to_ndarray(format="bgr24")
+    pil_image = Image.fromarray(img)
+    
+    try:
+        results = st.session_state.model(img)
+        
+        if results:
+            result = results[0]
+            filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
+            
+            draw = ImageDraw.Draw(pil_image)
+            px_to_mm_ratio = None
+            coin_detected = False
+            detected_objects = []
 
-        # Find coin for scaling
-        for detection in filtered_detections:
-            st.write(detection)
-            if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
-                coin_xywhr = detection.xywhr[0]
-                width_px = coin_xywhr[2]
-                height_px = coin_xywhr[3]
-                avg_px_diameter = (width_px + height_px) / 2
-                if avg_px_diameter > 0:
-                    px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                    coin_detected = True
-                break
+            # Find coin for scaling
+            for detection in filtered_detections:
+                if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
+                    coin_xywhr = detection.xywhr[0]
+                    width_px = coin_xywhr[2]
+                    height_px = coin_xywhr[3]
+                    avg_px_diameter = (width_px + height_px) / 2
+                    if avg_px_diameter > 0:
+                        px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+                        coin_detected = True
+                    break
 
-        for detection in filtered_detections:
-            if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
-                class_id = int(detection.cls[0])
-                confidence = detection.conf[0]
-                x1, y1, x2, y2 = map(int, detection.xyxy[0])
-                class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
-                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+            for detection in filtered_detections:
+                if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
+                    class_id = int(detection.cls[0])
+                    confidence = detection.conf[0]
+                    x1, y1, x2, y2 = map(int, detection.xyxy[0])
+                    class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
+                    color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
 
-                label_text = f"{class_name}"
-                if class_id != COIN_CLASS_ID:
-                    detected_objects.append(class_name)
+                    label_text = f"{class_name}"
+                    if class_id != COIN_CLASS_ID:
+                        detected_objects.append(class_name)
 
-                if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio:
-                    diameter_px = (x2 - x1 + y2 - y1) / 2
-                    diameter_mm = diameter_px * px_to_mm_ratio
-                    label_text += f", Dia: {diameter_mm:.2f}mm"
-                elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio:
-                    xywhr = detection.xywhr[0]
-                    width_px = xywhr[2]
-                    height_px = xywhr[3]
-                    length_px = max(width_px, height_px)
-                    length_mm = length_px * px_to_mm_ratio
-                    label_text += f", Length: {length_mm:.2f}mm"
-                elif class_id != COIN_CLASS_ID:
-                    label_text += ", Length: N/A (No Coin)"
-                elif class_id == COIN_CLASS_ID:
-                    label_text += ", Dia: N/A (No Ratio)"
+                    if class_id == COIN_CLASS_ID and coin_detected and px_to_mm_ratio:
+                        diameter_px = (x2 - x1 + y2 - y1) / 2
+                        diameter_mm = diameter_px * px_to_mm_ratio
+                        label_text += f", Dia: {diameter_mm:.2f}mm"
+                    elif class_id != COIN_CLASS_ID and coin_detected and px_to_mm_ratio:
+                        xywhr = detection.xywhr[0]
+                        width_px = xywhr[2]
+                        height_px = xywhr[3]
+                        length_px = max(width_px, height_px)
+                        length_mm = length_px * px_to_mm_ratio
+                        label_text += f", Length: {length_mm:.2f}mm"
+                    elif class_id != COIN_CLASS_ID:
+                        label_text += ", Length: N/A (No Coin)"
+                    elif class_id == COIN_CLASS_ID:
+                        label_text += ", Dia: N/A (No Ratio)"
 
-                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
-                text_width, text_height = get_text_size(draw, label_text, font)
-                draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
-                draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
+                    draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
+                    text_width, text_height = get_text_size(draw, label_text, font)
+                    draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
+                    draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
 
-        st.image(pil_image, caption="Detected Objects with Info", use_container_width=True)
-
-        st.subheader("✨ Detection Summary ✨")
-        screw_counts = Counter(detected_objects)
-        if screw_counts:
-            st.markdown("Detected the following screws/nuts:")
-            for name, count in screw_counts.items():
-                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                st.markdown(f"- <span style='color: {color}'>{name}:</span> **{count}**", unsafe_allow_html=True)
-        else:
-            st.info("No screws or nuts detected.")
-
+            # Update detection summary
+            st.session_state.detection_summary.update(detected_objects)
+            
     except Exception as e:
-        st.error(f"Error during detection or processing: {str(e)}")
+        st.error(f"Error during detection: {str(e)}")
+    
+    return av.VideoFrame.from_ndarray(np.array(pil_image), format="bgr24")
+
+# Main app
+st.header("Real-Time Detection")
+st.write("Point your camera at screws/nuts to detect and measure them. A 10sen coin is needed for scale.")
+
+# WebRTC streamer
+webrtc_ctx = webrtc_streamer(
+    key="object-detection",
+    mode=WebRtcMode.SENDRECV,
+    rtc_configuration=RTC_CONFIGURATION,
+    video_frame_callback=process_frame,
+    media_stream_constraints={"video": True, "audio": False},
+    async_processing=True,
+)
+
+# Display detection summary
+st.subheader("✨ Real-Time Detection Summary ✨")
+summary_placeholder = st.empty()
+
+# Periodically update the summary
+if webrtc_ctx.state.playing:
+    while True:
+        if st.session_state.detection_summary:
+            summary_text = "Detected the following screws/nuts:\n"
+            for name, count in st.session_state.detection_summary.most_common():
+                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
+                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
+            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
+        else:
+            summary_placeholder.info("No screws or nuts detected yet.")
+        
+        # Small delay to prevent high CPU usage
+        import time
+        time.sleep(1)
