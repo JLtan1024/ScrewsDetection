@@ -1,9 +1,9 @@
-streamlit>=1.28.0
-ultralytics>=8.0.203
-opencv-python-headless>=4.8.1  # Lighter than opencv-python
-numpy>=1.26.0
-Pillow>=10.0.1
-torch>=2.2.0  # PyTorch now supports Python 3.12
-torchvision>=0.16.0
-streamlit-webrtc>=0.47.0
-av>=10.0.0
+streamlit==1.32.0
+ultralytics==8.0.0
+Pillow==10.0.0
+numpy==1.24.0
+opencv-python-headless==4.7.0.72  # Use headless version to avoid GUI dependencies
+streamlit-webrtc==0.47.0
+av==10.0.0
+torch==2.0.0
+torchvision==0.15.0
