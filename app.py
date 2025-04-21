@@ -5,7 +5,17 @@ from PIL import Image, ImageDraw, ImageFont
 from collections import Counter
 import time
 import tempfile
-from ultralytics import YOLO
+import sys
+import asyncio
+import threading
+
+# Fix for Torch/Streamlit Compatibility in Python 3.12
+if sys.version_info >= (3, 12):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        if threading.current_thread() is threading.main_thread():
+            asyncio.set_event_loop(asyncio.new_event_loop())
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -41,12 +51,25 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize model
+# Initialize model with error handling
 @st.cache_resource
 def load_model():
-    return YOLO("yolo11-obb12classes.pt")
+    try:
+        model = YOLO("yolo11-obb12classes.pt")
+        # Warm-up inference
+        dummy_input = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
+        _ = model(dummy_input)
+        return model
+    except Exception as e:
+        st.error(f"Model initialization failed: {e}")
+        st.stop()
 
-model = load_model()
+try:
+    from ultralytics import YOLO
+    model = load_model()
+except ImportError as e:
+    st.error(f"Failed to import YOLO: {e}")
+    st.stop()
 
 # Streamlit UI
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
@@ -73,7 +96,6 @@ with st.sidebar:
     SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
     SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
 
-# Helper functions
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
         bbox = draw.textbbox((0, 0), text, font=font)
@@ -173,7 +195,7 @@ def process_frame(frame, model, px_to_mm_ratio=None):
             class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
             color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
 
-            label_text = f"{class_name}"
+            label_text = f"{class_name} {confidence:.2f}"
             if class_id != COIN_CLASS_ID:
                 detected_objects.append(class_name)
 
@@ -188,10 +210,6 @@ def process_frame(frame, model, px_to_mm_ratio=None):
                 length_px = max(width_px, height_px)
                 length_mm = length_px * current_px_to_mm_ratio
                 label_text += f", Length: {length_mm:.2f}mm"
-            elif class_id != COIN_CLASS_ID:
-                label_text += ", Length: N/A (No Coin)"
-            elif class_id == COIN_CLASS_ID:
-                label_text += ", Dia: N/A (No Ratio)"
 
             if SHOW_DETECTIONS:
                 draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
@@ -255,18 +273,20 @@ elif input_method == "Upload Video":
         cap.release()
 
 elif input_method == "Webcam":
+    if 'cap' not in st.session_state or st.session_state.cap is None:
+        st.session_state.cap = cv2.VideoCapture(0)
+        st.session_state.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
+        st.session_state.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
+    
     stop_button = st.button("Stop Webcam")
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
     
     px_to_mm_ratio = None
     all_detected_objects = []
     fps = 0
     prev_time = 0
     
-    while cap.isOpened() and not stop_button:
-        ret, frame = cap.read()
+    while st.session_state.cap.isOpened() and not stop_button:
+        ret, frame = st.session_state.cap.read()
         if not ret:
             st.error("Failed to capture frame")
             break
@@ -302,5 +322,8 @@ elif input_method == "Webcam":
         
         time.sleep(0.033)  # ~30fps
     
-    cap.release()
+    if st.session_state.cap is not None:
+        st.session_state.cap.release()
+        st.session_state.cap = None
     st.success("Webcam stopped")
+    
