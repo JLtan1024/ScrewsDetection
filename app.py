@@ -8,8 +8,13 @@ import tempfile
 import sys
 import asyncio
 import threading
+import os
 
-# Fix for Torch/Streamlit compatibility in Python 3.12
+# ========================
+# COMPATIBILITY FIXES
+# ========================
+
+# Fix for Python 3.12 compatibility
 if sys.version_info >= (3, 12):
     try:
         asyncio.get_running_loop()
@@ -17,7 +22,15 @@ if sys.version_info >= (3, 12):
         if threading.current_thread() is threading.main_thread():
             asyncio.set_event_loop(asyncio.new_event_loop())
 
-# First try to import ultralytics
+# Additional torch-specific fix
+if 'torch' in sys.modules:
+    import torch
+    torch.set_num_threads(1)  # Reduce thread contention
+
+# ========================
+# MODEL INITIALIZATION
+# ========================
+
 try:
     from ultralytics import YOLO
 except ImportError as e:
@@ -26,7 +39,6 @@ except ImportError as e:
         with st.spinner("Installing ultralytics..."):
             try:
                 import subprocess
-                import sys
                 subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics"])
                 st.success("Installed successfully! Please refresh the page.")
                 st.rerun()
@@ -68,16 +80,18 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize model with proper error handling
+# Initialize model
 if 'model' not in st.session_state:
     try:
         st.session_state.model = YOLO("yolo11-obb12classes.pt")
-        # Warm-up the model with a dummy inference
+        # Warm-up the model
         dummy_input = np.zeros((640, 640, 3), dtype=np.uint8)
         _ = st.session_state.model(dummy_input)
     except Exception as e:
         st.error(f"Model initialization failed: {str(e)}")
         st.stop()
+
+# Initialize session state
 if 'cap' not in st.session_state:
     st.session_state.cap = None
 if 'running' not in st.session_state:
@@ -87,35 +101,35 @@ if 'px_to_mm_ratio' not in st.session_state:
 if 'detected_objects' not in st.session_state:
     st.session_state.detected_objects = []
 
-# Sidebar controls
-with st.sidebar:
-    st.header("Settings")
-    input_method = st.radio(
-        "Input Source",
-        ("Webcam", "Upload Image", "Upload Video"),
-        index=0
-    )
-    
-    st.subheader("Detection Parameters")
-    IOU_THRESHOLD = st.slider("IoU Threshold (NMS)", 0.0, 1.0, 0.7, step=0.05)
-    CONFIDENCE_THRESHOLD = st.slider("Confidence Threshold", 0.0, 1.0, 0.5, step=0.05)
-    
-    if input_method == "Webcam":
-        WEBCAM_WIDTH = st.slider("Webcam Width", 320, 1920, 640, step=160)
-        WEBCAM_HEIGHT = st.slider("Webcam Height", 240, 1080, 480, step=120)
-        SHOW_FPS = st.checkbox("Show FPS", value=True)
-    
-    st.subheader("Display Options")
-    SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
-    SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
+# ========================
+# HELPER FUNCTIONS
+# ========================
+
+def initialize_webcam():
+    """Try different camera indices and backends to initialize webcam"""
+    for camera_index in [0, 1, 2, -1]:
+        for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_V4L2, cv2.CAP_ANY]:
+            try:
+                cap = cv2.VideoCapture(camera_index, backend)
+                if cap.isOpened():
+                    # Test frame read
+                    ret, _ = cap.read()
+                    if ret:
+                        return cap
+                    cap.release()
+            except:
+                continue
+    return None
 
 def get_text_size(draw, text, font):
+    """Get text size with compatibility for different PIL versions"""
     if hasattr(draw, 'textbbox'):
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
     return draw.textsize(text, font=font)
 
 def non_max_suppression(detections, iou_threshold):
+    """Custom NMS implementation"""
     if len(detections) == 0:
         return []
 
@@ -166,6 +180,7 @@ def non_max_suppression(detections, iou_threshold):
     return [detections[i] for i in keep_indices]
 
 def process_frame(frame):
+    """Process a single frame for object detection"""
     results = st.session_state.model(frame, conf=CONFIDENCE_THRESHOLD)
     
     if not results:
@@ -231,6 +246,32 @@ def process_frame(frame):
 
     return np.array(pil_image), current_detections
 
+# ========================
+# STREAMLIT UI
+# ========================
+
+# Sidebar controls
+with st.sidebar:
+    st.header("Settings")
+    input_method = st.radio(
+        "Input Source",
+        ("Webcam", "Upload Image", "Upload Video"),
+        index=0
+    )
+    
+    st.subheader("Detection Parameters")
+    IOU_THRESHOLD = st.slider("IoU Threshold (NMS)", 0.0, 1.0, 0.7, step=0.05)
+    CONFIDENCE_THRESHOLD = st.slider("Confidence Threshold", 0.0, 1.0, 0.5, step=0.05)
+    
+    if input_method == "Webcam":
+        WEBCAM_WIDTH = st.slider("Webcam Width", 320, 1920, 640, step=160)
+        WEBCAM_HEIGHT = st.slider("Webcam Height", 240, 1080, 480, step=120)
+        SHOW_FPS = st.checkbox("Show FPS", value=True)
+    
+    st.subheader("Display Options")
+    SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
+    SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
+
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
@@ -242,42 +283,37 @@ with col2:
     stop_button = st.button("Stop Webcam")
 
 if start_button and input_method == "Webcam":
-    try:
-        # Try different backends and camera indices
-        for backend in [cv2.CAP_ANY, cv2.CAP_DSHOW, cv2.CAP_MSMF]:
-            for camera_index in [0, 1, 2]:
-                st.session_state.cap = cv2.VideoCapture(camera_index, backend)
-                if st.session_state.cap.isOpened():
-                    st.success(f"Webcam opened successfully with index {camera_index}")
-                    break
-            if st.session_state.cap.isOpened():
-                break
+    with st.spinner("Initializing webcam..."):
+        st.session_state.cap = initialize_webcam()
         
-        if not st.session_state.cap.isOpened():
-            st.error("Failed to open webcam with all available backends and indices")
-            # Create a placeholder image
-            placeholder = np.zeros((WEBCAM_HEIGHT, WEBCAM_WIDTH, 3), dtype=np.uint8)
-            cv2.putText(placeholder, "Webcam Not Available", (50, 200), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            st.image(placeholder, channels="BGR")
-            st.session_state.running = False
-        else:
+        if st.session_state.cap and st.session_state.cap.isOpened():
             st.session_state.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
             st.session_state.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
             st.session_state.running = True
             st.session_state.px_to_mm_ratio = None
             st.session_state.detected_objects = []
-    except Exception as e:
-        st.error(f"Webcam initialization failed: {str(e)}")
-        if st.session_state.cap is not None:
-            st.session_state.cap.release()
-        st.session_state.running = False
+            st.success("Webcam ready!")
+        else:
+            st.error("""
+            Webcam initialization failed. Please:
+            1. Check camera connection
+            2. Grant camera permissions
+            3. Close other apps using camera
+            """)
+            # Show placeholder
+            placeholder = np.zeros((WEBCAM_HEIGHT, WEBCAM_WIDTH, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "Webcam Not Available", 
+                       (int(WEBCAM_WIDTH/4), int(WEBCAM_HEIGHT/2)),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            st.image(placeholder, channels="BGR")
+            st.session_state.running = False
 
 if stop_button:
     if st.session_state.cap is not None:
         st.session_state.cap.release()
         st.session_state.cap = None
     st.session_state.running = False
+    st.info("Webcam released")
 
 # Main processing
 frame_placeholder = st.empty()
