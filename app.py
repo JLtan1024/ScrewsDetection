@@ -17,9 +17,26 @@ if sys.version_info >= (3, 12):
         if threading.current_thread() is threading.main_thread():
             asyncio.set_event_loop(asyncio.new_event_loop())
 
+# First try to import ultralytics
+try:
+    from ultralytics import YOLO
+except ImportError as e:
+    st.error(f"Failed to import YOLO: {e}")
+    if st.button("Install Ultralytics"):
+        with st.spinner("Installing ultralytics..."):
+            try:
+                import subprocess
+                import sys
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics"])
+                st.success("Installed successfully! Please refresh the page.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Installation failed: {e}")
+    st.stop()
+
 # Constants
-COIN_CLASS_ID = 11
-COIN_DIAMETER_MM = 18.80
+COIN_CLASS_ID = 11  # 10sen coin
+COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
 CLASS_NAMES = {
     0: 'long lag screw',
     1: 'wood screw',
@@ -51,17 +68,16 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize session state
+# Initialize model with proper error handling
 if 'model' not in st.session_state:
     try:
         st.session_state.model = YOLO("yolo11-obb12classes.pt")
-        # Warm-up the model
-        dummy = np.zeros((640, 640, 3), dtype=np.uint8)
-        _ = st.session_state.model(dummy)
+        # Warm-up the model with a dummy inference
+        dummy_input = np.zeros((640, 640, 3), dtype=np.uint8)
+        _ = st.session_state.model(dummy_input)
     except Exception as e:
         st.error(f"Model initialization failed: {str(e)}")
         st.stop()
-
 if 'cap' not in st.session_state:
     st.session_state.cap = None
 if 'running' not in st.session_state:
