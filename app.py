@@ -243,18 +243,34 @@ with col2:
 
 if start_button and input_method == "Webcam":
     try:
-        st.session_state.cap = cv2.VideoCapture(0)
-        if not st.session_state.cap.isOpened():
-            st.error("Failed to open webcam. Trying alternative method...")
-            st.session_state.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        # Try different backends and camera indices
+        for backend in [cv2.CAP_ANY, cv2.CAP_DSHOW, cv2.CAP_MSMF]:
+            for camera_index in [0, 1, 2]:
+                st.session_state.cap = cv2.VideoCapture(camera_index, backend)
+                if st.session_state.cap.isOpened():
+                    st.success(f"Webcam opened successfully with index {camera_index}")
+                    break
+            if st.session_state.cap.isOpened():
+                break
         
-        st.session_state.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-        st.session_state.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
-        st.session_state.running = True
-        st.session_state.px_to_mm_ratio = None
-        st.session_state.detected_objects = []
+        if not st.session_state.cap.isOpened():
+            st.error("Failed to open webcam with all available backends and indices")
+            # Create a placeholder image
+            placeholder = np.zeros((WEBCAM_HEIGHT, WEBCAM_WIDTH, 3), dtype=np.uint8)
+            cv2.putText(placeholder, "Webcam Not Available", (50, 200), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            st.image(placeholder, channels="BGR")
+            st.session_state.running = False
+        else:
+            st.session_state.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
+            st.session_state.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
+            st.session_state.running = True
+            st.session_state.px_to_mm_ratio = None
+            st.session_state.detected_objects = []
     except Exception as e:
         st.error(f"Webcam initialization failed: {str(e)}")
+        if st.session_state.cap is not None:
+            st.session_state.cap.release()
         st.session_state.running = False
 
 if stop_button:
