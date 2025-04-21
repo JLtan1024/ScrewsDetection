@@ -5,3 +5,5 @@ numpy>=1.26.0
 Pillow>=10.0.1
 torch>=2.2.0  # PyTorch now supports Python 3.12
 torchvision>=0.16.0
+streamlit-webrtc>=0.47.0
+av>=10.0.0
