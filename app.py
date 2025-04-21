@@ -6,7 +6,21 @@ import time
 import tempfile
 from ultralytics import YOLO
 import cv2
+# Try importing OpenCV with fallback
+try:
+    import cv2
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    st.warning("OpenCV not available - some features may be limited")
 
+# Try importing YOLO
+try:
+    from ultralytics import YOLO
+    YOLO_AVAILABLE = True
+except ImportError as e:
+    st.error(f"Failed to import YOLO: {e}")
+    YOLO_AVAILABLE = False
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
 COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
