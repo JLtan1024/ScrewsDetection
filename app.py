@@ -7,6 +7,17 @@ import time
 import tempfile
 from ultralytics import YOLO
 
+import streamlit as st
+
+available_cams = find_available_cameras()
+
+if not available_cams:
+    st.warning("No available webcams found.")
+else:
+    cap = cv2.VideoCapture(available_cams[0])
+    st.success(f"Using camera index {available_cams[0]}")
+    # Read and display frames here
+
 # Try importing OpenCV with fallback
 try:
     import cv2
