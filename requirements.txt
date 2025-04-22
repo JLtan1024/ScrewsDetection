@@ -1,7 +1,7 @@
-streamlit>=1.28.0
-ultralytics>=8.3.113
-opencv-python>=4.11.0.86  # Lighter than opencv-python
 numpy>=1.26.0
 Pillow>=10.0.1
-torch>=2.2.0  # PyTorch now supports Python 3.12
 torchvision>=0.16.0
+opencv-python==4.11.0.86
+ultralytics==8.3.113
+streamlit==1.41.1
+torch==2.6.0
