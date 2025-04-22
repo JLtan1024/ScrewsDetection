@@ -112,7 +112,7 @@ def initialize_webcam():
         ret, _ = cap.read()
         if ret:
              return cap
-         cap.release()
+        cap.release()
     return None
 
 def get_text_size(draw, text, font):
