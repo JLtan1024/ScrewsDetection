@@ -378,6 +378,7 @@ elif input_method == "Webcam (Live Camera)":
         prev_time = 0
 
         cap = cv2.VideoCapture(0)  # Open the webcam
+        st.write(cap)
         if not cap.isOpened():
             st.error("Failed to open webcam. Please check your camera settings.")
         else:
