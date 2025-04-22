@@ -106,19 +106,13 @@ if 'detected_objects' not in st.session_state:
 # ========================
 
 def initialize_webcam():
-    """Try different camera indices and backends to initialize webcam"""
-    for camera_index in [0, 1, 2, -1]:
-        for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_V4L2, cv2.CAP_ANY]:
-            try:
-                cap = cv2.VideoCapture(0)
-                if cap.isOpened():
-                    # Test frame read
-                    ret, _ = cap.read()
-                    if ret:
-                        return cap
-                    cap.release()
-            except:
-                continue
+    cap = cv2.VideoCapture(0)
+    if cap.isOpened():
+         # Test frame read
+        ret, _ = cap.read()
+        if ret:
+             return cap
+         cap.release()
     return None
 
 def get_text_size(draw, text, font):
