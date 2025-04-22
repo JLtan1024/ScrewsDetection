@@ -7,8 +7,14 @@ import time
 import tempfile
 from ultralytics import YOLO
 
-import streamlit as st
-
+def find_available_cameras(max_index=5):
+    available = []
+    for i in range(max_index):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            available.append(i)
+            cap.release()
+    return available
 available_cams = find_available_cameras()
 
 if not available_cams:
