@@ -1,6 +1,6 @@
 numpy>=1.26.0
 Pillow>=10.0.1
-torchvision>=0.16.0
+torchvision>=0.21.0
 opencv-python==4.11.0.86
 ultralytics==8.3.113
 streamlit==1.41.1
