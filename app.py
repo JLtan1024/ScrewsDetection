@@ -110,7 +110,7 @@ def initialize_webcam():
     for camera_index in [0, 1, 2, -1]:
         for backend in [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_V4L2, cv2.CAP_ANY]:
             try:
-                cap = cv2.VideoCapture(camera_index, backend)
+                cap = cv2.VideoCapture(0)
                 if cap.isOpened():
                     # Test frame read
                     ret, _ = cap.read()
