@@ -6,7 +6,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-
+import cv2
 def find_available_cameras(max_index=5):
     available = []
     for i in range(max_index):
