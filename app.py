@@ -6,31 +6,9 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import av
 import cv2
-def find_available_cameras(max_index=5):
-    available = []
-    for i in range(max_index):
-        cap = cv2.VideoCapture(i)
-        if cap.isOpened():
-            available.append(i)
-            cap.release()
-    return available
-available_cams = find_available_cameras()
-
-if not available_cams:
-    st.warning("No available webcams found.")
-else:
-    cap = cv2.VideoCapture(available_cams[0])
-    st.success(f"Using camera index {available_cams[0]}")
-    # Read and display frames here
-
-# Try importing OpenCV with fallback
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-    st.warning("OpenCV not available - some features may be limited")
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -260,6 +238,23 @@ def get_webcam_frame():
     
     return None
 
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.model = st.session_state.model  # Load YOLO model from session state
+        self.px_to_mm_ratio = None  # Initialize pixel-to-mm ratio
+
+    def transform(self, frame):
+        # Convert frame to numpy array
+        img = frame.to_ndarray(format="bgr24")
+
+        # Process the frame using your YOLO model
+        processed_frame, _, self.px_to_mm_ratio = process_frame(
+            img, self.model, self.px_to_mm_ratio
+        )
+
+        # Return the processed frame
+        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
@@ -355,61 +350,11 @@ elif input_method == "Upload Video":
         cap.release()
 
 elif input_method == "Webcam (Live Camera)":
-    if 'webcam_running' not in st.session_state:
-        st.session_state.webcam_running = False  # Initialize webcam state
+    st.subheader("Live Camera Detection")
 
-    # Buttons to control the webcam
-    col1, col2 = st.columns(2)
-    with col1:
-        start_button = st.button("Start Webcam")
-    with col2:
-        stop_button = st.button("Stop Webcam")
-
-    if start_button:
-        st.session_state.webcam_running = True  # Start the webcam
-    if stop_button:
-        st.session_state.webcam_running = False  # Stop the webcam
-
-    # Webcam processing logic
-    if st.session_state.webcam_running:
-        px_to_mm_ratio = None
-        all_detected_objects = []
-        fps = 0
-        prev_time = 0
-
-        cap = cv2.VideoCapture(0)  # Open the webcam
-        st.write(cap)
-        if not cap.isOpened():
-            st.error("Failed to open webcam. Please check your camera settings.")
-        else:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
-
-            while st.session_state.webcam_running:
-                ret, frame = cap.read()
-                if not ret:
-                    st.error("Failed to capture frame from webcam.")
-                    break
-
-                processed_frame, detected_objects, px_to_mm_ratio = process_frame(
-                    frame, st.session_state.model, px_to_mm_ratio
-                )
-
-                if detected_objects:
-                    all_detected_objects.extend(detected_objects)
-
-                frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
-
-                if SHOW_SUMMARY and all_detected_objects:
-                    screw_counts = Counter(all_detected_objects)
-                    summary_text = "### ✨ Detection Summary ✨\n"
-                    for name, count in screw_counts.items():
-                        color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                        summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-                    summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
-                elif SHOW_SUMMARY:
-                    summary_placeholder.info("No screws or nuts detected yet.")
-
-                time.sleep(0.03)  # Control playback speed
-
-            cap.release()  # Release the webcam when done
+    # Start the webcam stream using streamlit-webrtc
+    webrtc_streamer(
+        key="live-camera",
+        video_transformer_factory=VideoTransformer,
+        media_stream_constraints={"video": True, "audio": False},
+    )
