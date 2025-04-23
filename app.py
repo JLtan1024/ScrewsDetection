@@ -49,7 +49,7 @@ model = YOLO("yolo11-obb12classes.pt")
 
 
 class VideoTransformer(VideoTransformerBase):
-        def __init__(self):
+	def __init__(self):
 		self.prev_time = time.time()
 		self.fps = 0
 
