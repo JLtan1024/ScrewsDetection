@@ -43,11 +43,9 @@ CATEGORY_COLORS = {
 }
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
-
-
+st.write("hre")
 st.session_state.model = YOLO("yolo11-obb12classes.pt")
-
-
+st.weite("gekko")
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
