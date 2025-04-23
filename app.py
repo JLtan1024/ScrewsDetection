@@ -6,7 +6,10 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, ClientSettings
+import av
 import cv2
+import supervision as sv
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -42,14 +45,38 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize session state
-if 'model' not in st.session_state:
-    try:
-        st.session_state.model = YOLO("yolo11-obb12classes.pt")
-    except Exception as e:
-        st.error(f"Failed to load model: {e}")
-        st.stop()
+model = YOLO("yolo11-obb12classes.pt")
 
+
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.prev_time = time.time()
+        self.fps = 0
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        # Convert the frame to an image
+        img = Image.fromarray(frame.to_ndarray())
+        # img = frame.to_ndarray(format="bgr24").copy()
+        # Flip the image horizontally
+        # img = np.flip(img, axis=1)
+        st.write(f"Frame shape: {img.size}")
+        # Processing time for the current frame
+        curr_time = time.time()
+        exec_time = curr_time - self.prev_time
+        self.prev_time = curr_time
+        # Calculate FPS
+        self.fps = 1 / exec_time if exec_time != 0 else self.fps
+
+        # Convert frame to numpy array
+        img = frame.to_ndarray(format="bgr24")
+        st.write(f"Frame shape: {img.shape}")
+        # Process the frame using your YOLO model
+        processed_frame, _, px_to_mm_ratio = process_frame(
+            img, model)
+
+        # Return the processed frame
+        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+            
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
@@ -130,11 +157,12 @@ def non_max_suppression(detections, iou_threshold):
 def process_frame(frame, model, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    
+    st.write(f"Results: {results}")
     if not results:
         return frame, [], px_to_mm_ratio
     
     result = results[0]
+    print("Object detected:", len(result))
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
     
     pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -164,6 +192,7 @@ def process_frame(frame, model, px_to_mm_ratio=None):
 
     # Draw detections
     for detection in filtered_detections:
+        st.write(f"Detection: {detection}")
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
             confidence = detection.conf[0]
@@ -199,6 +228,43 @@ def process_frame(frame, model, px_to_mm_ratio=None):
 
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
+def get_webcam_frame():
+    """Get frame from webcam with fallback to Streamlit camera"""
+    # Try direct OpenCV capture first
+    try:
+        cap = cv2.VideoCapture(0)  # Open the default webcam
+        if not cap.isOpened():
+            st.warning("Webcam could not be opened. Please check your camera settings.")
+            return None
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
+
+        ret, frame = cap.read()
+        if not ret:
+            st.warning("Failed to read frame from webcam.")
+            cap.release()
+            return None
+
+        cap.release()
+        return frame
+    except Exception as e:
+        st.warning(f"OpenCV webcam access failed: {e}")
+        return None
+
+    # Fallback to Streamlit's camera input
+    try:
+        img_file_buffer = st.camera_input("Take a picture")
+        if img_file_buffer is not None:
+            return cv2.imdecode(np.frombuffer(
+                img_file_buffer.getvalue(), 
+                np.uint8
+            ), cv2.IMREAD_COLOR)
+    except Exception as e:
+        st.error(f"Camera capture failed: {e}")
+    
+    return None
+
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
@@ -208,13 +274,18 @@ summary_placeholder = st.empty()
 if input_method == "Upload Image":
     st.subheader("Upload or Capture an Image")
     
+    # Option to upload an image
     uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
+    
+    # Option to capture an image using the camera
     captured_image = st.camera_input("Take a Picture")
     
     if uploaded_file is not None:
+        # Process uploaded image
         image = Image.open(uploaded_file)
         frame = np.array(image)
     elif captured_image is not None:
+        # Process captured image
         frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
     else:
         frame = None
@@ -236,13 +307,26 @@ if input_method == "Upload Image":
 elif input_method == "Upload Video":
     st.subheader("Upload or Capture a Video")
     
+    # Option to upload a video
     uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
     
+    # Option to capture a video using the camera
+    captured_video = st.camera_input("Record a Video")
+    
     if uploaded_video is not None:
+        # Process uploaded video
         tfile = tempfile.NamedTemporaryFile(delete=False) 
         tfile.write(uploaded_video.read())
         video_path = tfile.name
-        
+    elif captured_video is not None:
+        # Process captured video
+        tfile = tempfile.NamedTemporaryFile(delete=False) 
+        tfile.write(captured_video.getvalue())
+        video_path = tfile.name
+    else:
+        video_path = None
+
+    if video_path is not None:
         cap = cv2.VideoCapture(video_path)
         px_to_mm_ratio = None
         all_detected_objects = []
@@ -271,48 +355,24 @@ elif input_method == "Upload Video":
             elif SHOW_SUMMARY:
                 summary_placeholder.info("No screws or nuts detected yet.")
             
-            time.sleep(0.03)
+            time.sleep(0.03)  # Control playback speed
             
         cap.release()
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
-    
-    cap = cv2.VideoCapture(0)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
-    
-    px_to_mm_ratio = None
-    all_detected_objects = []
-    
-    stop_button = st.button("Stop Webcam")
-    
-    while cap.isOpened() and not stop_button:
-        ret, frame = cap.read()
-        if not ret:
-            st.warning("Failed to capture frame from webcam.")
-            break
-            
-        processed_frame, detected_objects, px_to_mm_ratio = process_frame(
-            frame, st.session_state.model, px_to_mm_ratio
-        )
-        
-        if detected_objects:
-            all_detected_objects.extend(detected_objects)
-        
-        frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
-        
-        if SHOW_SUMMARY and all_detected_objects:
-            screw_counts = Counter(all_detected_objects)
-            summary_text = "### ✨ Detection Summary ✨\n"
-            for name, count in screw_counts.items():
-                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
-        elif SHOW_SUMMARY:
-            summary_placeholder.info("No screws or nuts detected yet.")
-        
-        if stop_button:
-            break
-    
-    cap.release()
+
+    client_settings = ClientSettings(
+        rtc_configuration={
+            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+        },
+        media_stream_constraints={"video": True, "audio": False},
+    )
+    # Start the webcam stream using streamlit-webrtc
+    webrtc_streamer(
+        key="live-camera",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=VideoTransformer,
+        rtc_configuration=client_settings,
+        async_processing=True,  # Enable async processing
+    )
