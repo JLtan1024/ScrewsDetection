@@ -6,9 +6,10 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase,WebRtcMode, ClientSettings
 import av
 import cv2
+import supervision as sv
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -48,17 +49,32 @@ model = YOLO("yolo11-obb12classes.pt")
 
 
 class VideoTransformer(VideoTransformerBase):
-        def __init__(self, model):
-            self.model = model 
-            self.px_to_mm_ratio = None  # Initialize pixel-to-mm ratio
-    
+        def __init__(self):
+				self.prev_time = time.time()
+				self.fps = 0
+
+		def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+				# Convert the frame to an image
+				img = Image.fromarray(frame.to_ndarray())
+				# img = frame.to_ndarray(format="bgr24").copy()
+				# Flip the image horizontally
+				# img = np.flip(img, axis=1)
+				results = model.predict(img)
+
+				# Processing time for the current frame
+				curr_time = time.time()
+				exec_time = curr_time - self.prev_time
+				self.prev_time = curr_time
+				# Calculate FPS
+				self.fps = 1 / exec_time if exec_time != 0 else self.fps
+            
         def transform(self, frame):
             # Convert frame to numpy array
             img = frame.to_ndarray(format="bgr24")
     
             # Process the frame using your YOLO model
             processed_frame, _, self.px_to_mm_ratio = process_frame(
-                img, self.model, self.px_to_mm_ratio
+                img, model)
             )
     
             # Return the processed frame
@@ -348,9 +364,19 @@ elif input_method == "Upload Video":
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
 
+    client_settings = ClientSettings(
+			# rtc_configuration={
+			# 	"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+			# },
+			media_stream_constraints={
+				"video": True,
+				"audio": False,
+			},
+		)
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="live-camera",
-        video_transformer_factory=lambda: VideoTransformer(model),
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory= VideoTransformer,
         media_stream_constraints={"video": True, "audio": False},
     )
