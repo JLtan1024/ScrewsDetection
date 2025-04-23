@@ -69,7 +69,7 @@ class VideoTransformer(VideoTransformerBase):
 		self.fps = 1 / exec_time if exec_time != 0 else self.fps
             
   
-           	 # Convert frame to numpy array
+           	# Convert frame to numpy array
             	img = frame.to_ndarray(format="bgr24")
     
             	# Process the frame using your YOLO model
