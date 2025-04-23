@@ -364,7 +364,10 @@ elif input_method == "Webcam (Live Camera)":
 
     client_settings = ClientSettings(
         rtc_configuration={
-            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+            "iceServers": [
+                {"urls": "stun:stun.l.google.com:19302"},
+                {"urls": "turn:turn.example.com", "username": "user", "credential": "password"}
+            ]
         },
         media_stream_constraints={"video": True, "audio": False},
     )
