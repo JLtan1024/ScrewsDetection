@@ -193,6 +193,7 @@ def process_frame(frame, model, px_to_mm_ratio=None):
 
     # Draw detections
     for detection in filtered_detections:
+        st.write(f"Detection: {detection}")
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
             confidence = detection.conf[0]
