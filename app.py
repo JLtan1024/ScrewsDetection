@@ -4,8 +4,6 @@ import av
 # import logging
 import os
 import tempfile
-
-from websocket import frame_buffer
 # Set the environment variable
 # os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 # logging.basicConfig(level=logging.WARNING)
@@ -74,7 +72,8 @@ def draw_annotations(frame, boxes, masks, names):
 
 		# Check if masks are available
 		if masks is not None:
-			mask = masks[frame_buffer]
+			frame_number = 0  # Assuming you want to draw the mask for the first frame
+			mask = masks[frame_number]
 			alpha = 0.3  # Transparency of masks
 
 			# Draw mask
