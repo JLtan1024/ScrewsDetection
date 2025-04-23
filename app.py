@@ -375,5 +375,4 @@ elif input_method == "Webcam (Live Camera)":
         video_processor_factory=VideoTransformer,
         client_settings=client_settings,
         async_processing=True,  # Enable async processing
-        on_error=lambda e: st.error(f"WebRTC error: {e}"),
     )
