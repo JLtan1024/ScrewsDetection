@@ -43,10 +43,9 @@ CATEGORY_COLORS = {
 }
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
-st.write("hre")
+
 st.session_state.model = YOLO("yolo11-obb12classes.pt")
-st.write(st.session_state.model)
-st.write("gekko")
+
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
@@ -332,6 +331,7 @@ elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
     class VideoTransformer(VideoTransformerBase):
         def __init__(self):
+            st.write(st.session_state.model)
             self.model = st.session_state.model  # Load YOLO model from session state
             self.px_to_mm_ratio = None  # Initialize pixel-to-mm ratio
     
