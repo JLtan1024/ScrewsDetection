@@ -49,36 +49,34 @@ model = YOLO("yolo11-obb12classes.pt")
 
 
 class VideoTransformer(VideoTransformerBase):
-	def __init__(self):
-		self.prev_time = time.time()
-		self.fps = 0
+    def __init__(self):
+        self.prev_time = time.time()
+        self.fps = 0
 
-	def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-		# Convert the frame to an image
-		img = Image.fromarray(frame.to_ndarray())
-		# img = frame.to_ndarray(format="bgr24").copy()
-		# Flip the image horizontally
-		# img = np.flip(img, axis=1)
-		results = model.predict(img)
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        # Convert the frame to an image
+        img = Image.fromarray(frame.to_ndarray())
+        # img = frame.to_ndarray(format="bgr24").copy()
+        # Flip the image horizontally
+        # img = np.flip(img, axis=1)
+        results = model.predict(img)
 
-		# Processing time for the current frame
-		curr_time = time.time()
-		exec_time = curr_time - self.prev_time
-		self.prev_time = curr_time
-		# Calculate FPS
-		self.fps = 1 / exec_time if exec_time != 0 else self.fps
-            
-  
-    # Convert frame to numpy array
-		img = frame.to_ndarray(format="bgr24")
-    
-    # Process the frame using your YOLO model
-    processed_frame, _, self.px_to_mm_ratio = process_frame(
-               	img, model)
-    
-    
-  	# Return the processed frame
-    return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+        # Processing time for the current frame
+        curr_time = time.time()
+        exec_time = curr_time - self.prev_time
+        self.prev_time = curr_time
+        # Calculate FPS
+        self.fps = 1 / exec_time if exec_time != 0 else self.fps
+
+        # Convert frame to numpy array
+        img = frame.to_ndarray(format="bgr24")
+
+        # Process the frame using your YOLO model
+        processed_frame, _, px_to_mm_ratio = process_frame(
+            img, model)
+
+        # Return the processed frame
+        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
             
 # Sidebar controls
 with st.sidebar:
