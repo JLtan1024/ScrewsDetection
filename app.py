@@ -75,7 +75,7 @@ class VideoTransformer(VideoTransformerBase):
     # Process the frame using your YOLO model
     processed_frame, _, self.px_to_mm_ratio = process_frame(
                	img, model)
-    )
+    
     
   	# Return the processed frame
     return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
