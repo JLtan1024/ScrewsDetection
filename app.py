@@ -91,8 +91,18 @@ def main():
 	st.title("🤖 Ai Object Detection")
 	st.subheader("YOLOv8 & Streamlit WebRTC Integration :)")
 	st.sidebar.title("Select an option ⤵️")
-	choice = st.sidebar.radio("", ("Live Webcam Predict", "Capture Image And Predict",":rainbow[Multiple Images Upload -]🖼️🖼️🖼️", "Upload Video"),
-							captions = ["Live Count in Zone. :red[(Slow)]🐌", "Click and Detect. :orange[(Recommended)] :green[(Super Fast)]⚡⚡", "Upload & Process Multiple Images. :orange[(Recommended)] :green[(Fast)]⚡", "Upload Video & Predict 🏗️:orange[(Work in Progress)]📽️🎞️"], index = 1)
+	choice = st.sidebar.radio(
+		"Choose an option:",  # Add a meaningful label
+		("Live Webcam Predict", "Capture Image And Predict", ":rainbow[Multiple Images Upload -]🖼️🖼️🖼️", "Upload Video"),
+		captions=[
+			"Live Count in Zone. :red[(Slow)]🐌",
+			"Click and Detect. :orange[(Recommended)] :green[(Super Fast)]⚡⚡",
+			"Upload & Process Multiple Images. :orange[(Recommended)] :green[(Fast)]⚡",
+			"Upload Video & Predict 🏗️:orange[(Work in Progress)]📽️🎞️",
+		],
+		index=1,
+		label_visibility="collapsed",  # Hide the label if needed
+	)
 	conf = st.slider("Score threshold", 0.0, 1.0, 0.3, 0.05)
 	if choice == "Live Webcam Predict":
 		# conf = st.slider("Score threshold", 0.0, 1.0, 0.5, 0.05)
