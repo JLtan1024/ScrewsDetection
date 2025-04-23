@@ -44,7 +44,7 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-st.session_state.model = YOLO("yolo11-obb12classes.pt")
+model = YOLO("yolo11-obb12classes.pt")
 
 
 class VideoTransformer(VideoTransformerBase):
@@ -351,6 +351,6 @@ elif input_method == "Webcam (Live Camera)":
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="live-camera",
-        video_transformer_factory=lambda: VideoTransformer(st.session_state.model),
+        video_transformer_factory=lambda: VideoTransformer(model),
         media_stream_constraints={"video": True, "audio": False},
     )
