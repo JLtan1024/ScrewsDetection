@@ -375,4 +375,5 @@ elif input_method == "Webcam (Live Camera)":
         video_processor_factory=VideoTransformer,
         rtc_configuration=client_settings,
         async_processing=True,  # Enable async processing
+        media_stream_constraints={"video": {"width": WEBCAM_WIDTH, "height": WEBCAM_HEIGHT}},
     )
