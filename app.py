@@ -373,6 +373,6 @@ elif input_method == "Webcam (Live Camera)":
         key="live-camera",
         mode=WebRtcMode.SENDRECV,
         video_processor_factory=VideoTransformer,
-        client_settings=client_settings,
+        rtc_configuration=client_settings,
         async_processing=True,  # Enable async processing
     )
