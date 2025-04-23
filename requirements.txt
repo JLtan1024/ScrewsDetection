@@ -3,7 +3,7 @@ Pillow>=10.0.1
 torchvision>=0.21.0
 opencv-python==4.11.0.86
 ultralytics==8.3.113
-streamlit==1.41.1
+streamlit==1.33.0
 streamlit_webrtc==0.47.1
 torch==2.6.0
 supervision==0.16.0
