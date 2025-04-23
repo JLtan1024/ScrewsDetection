@@ -70,7 +70,7 @@ class VideoTransformer(VideoTransformerBase):
             
   
            	# Convert frame to numpy array
-            	img = frame.to_ndarray(format="bgr24")
+		img = frame.to_ndarray(format="bgr24")
     
             	# Process the frame using your YOLO model
            	 processed_frame, _, self.px_to_mm_ratio = process_frame(
