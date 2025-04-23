@@ -46,6 +46,24 @@ BORDER_WIDTH = 3
 
 st.session_state.model = YOLO("yolo11-obb12classes.pt")
 
+
+class VideoTransformer(VideoTransformerBase):
+        def __init__(self, model):
+            self.model = model 
+            self.px_to_mm_ratio = None  # Initialize pixel-to-mm ratio
+    
+        def transform(self, frame):
+            # Convert frame to numpy array
+            img = frame.to_ndarray(format="bgr24")
+    
+            # Process the frame using your YOLO model
+            processed_frame, _, self.px_to_mm_ratio = process_frame(
+                img, self.model, self.px_to_mm_ratio
+            )
+    
+            # Return the processed frame
+            return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+            
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
@@ -329,26 +347,10 @@ elif input_method == "Upload Video":
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
-    class VideoTransformer(VideoTransformerBase):
-        def __init__(self):
-            st.write(st.session_state.model)
-            self.model = st.session_state.model  # Load YOLO model from session state
-            self.px_to_mm_ratio = None  # Initialize pixel-to-mm ratio
     
-        def transform(self, frame):
-            # Convert frame to numpy array
-            img = frame.to_ndarray(format="bgr24")
-    
-            # Process the frame using your YOLO model
-            processed_frame, _, self.px_to_mm_ratio = process_frame(
-                img, self.model, self.px_to_mm_ratio
-            )
-    
-            # Return the processed frame
-            return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="live-camera",
-        video_transformer_factory=VideoTransformer,
+        video_transformer_factory=VideoTransformer(st.session_state.model),
         media_stream_constraints={"video": True, "audio": False},
     )
