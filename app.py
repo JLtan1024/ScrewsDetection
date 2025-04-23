@@ -6,7 +6,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase,WebRtcMode, ClientSettings
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, ClientSettings
 import av
 import cv2
 import supervision as sv
@@ -363,18 +363,17 @@ elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
 
     client_settings = ClientSettings(
-			# rtc_configuration={
-			# 	"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-			# },
-			media_stream_constraints={
-				"video": True,
-				"audio": False,
-			},
-		)
+        rtc_configuration={
+            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+        },
+        media_stream_constraints={"video": True, "audio": False},
+    )
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="live-camera",
         mode=WebRtcMode.SENDRECV,
-        video_processor_factory= VideoTransformer,
-        media_stream_constraints={"video": True, "audio": False},
+        video_processor_factory=VideoTransformer,
+        client_settings=client_settings,
+        async_processing=True,  # Enable async processing
+        on_error=lambda e: st.error(f"WebRTC error: {e}"),
     )
