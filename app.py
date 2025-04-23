@@ -351,6 +351,6 @@ elif input_method == "Webcam (Live Camera)":
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="live-camera",
-        video_transformer_factory=VideoTransformer(st.session_state.model),
+        video_transformer_factory=lambda: VideoTransformer(st.session_state.model),
         media_stream_constraints={"video": True, "audio": False},
     )
