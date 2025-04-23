@@ -44,14 +44,9 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize session state
-if 'model' not in st.session_state:
-    try:
-        print("Initialize model...")
-        st.session_state.model = YOLO("yolo11-obb12classes.pt")
-    except Exception as e:
-        st.error(f"Error loading YOLO model: {e}")
-        st.stop()
+
+st.session_state.model = YOLO("yolo11-obb12classes.pt")
+
 
 # Sidebar controls
 with st.sidebar:
