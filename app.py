@@ -347,7 +347,7 @@ elif input_method == "Upload Video":
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
-    
+    st.write(st.session_state.model)
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="live-camera",
