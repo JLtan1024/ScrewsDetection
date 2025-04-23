@@ -47,6 +47,7 @@ BORDER_WIDTH = 3
 # Initialize session state
 if 'model' not in st.session_state:
     try:
+        print("Initialize model...")
         st.session_state.model = YOLO("yolo11-obb12classes.pt")
     except Exception as e:
         st.error(f"Error loading YOLO model: {e}")
@@ -137,6 +138,7 @@ def process_frame(frame, model, px_to_mm_ratio=None):
         return frame, [], px_to_mm_ratio
     
     result = results[0]
+    print("Object detected:", len(result))
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
     
     pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
