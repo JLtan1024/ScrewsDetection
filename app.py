@@ -364,19 +364,26 @@ elif input_method == "Webcam (Live Camera)":
 
     client_settings = ClientSettings(
         rtc_configuration={
-            "iceServers": [
-                {"urls": "stun:stun.l.google.com:19302"},
-                {"urls": "turn:turn.example.com", "username": "user", "credential": "password"}
-            ]
+            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
         },
         media_stream_constraints={"video": True, "audio": False},
     )
     # Start the webcam stream using streamlit-webrtc
-    webrtc_streamer(
-        key="live-camera",
-        mode=WebRtcMode.SENDRECV,
-        video_processor_factory=VideoTransformer,
-        rtc_configuration=client_settings,
-        async_processing=True,  # Enable async processing
-        media_stream_constraints={"video": {"width": WEBCAM_WIDTH, "height": WEBCAM_HEIGHT}},
-    )
+    import logging
+
+    # Configure logging
+    logging.basicConfig(level=logging.ERROR)
+
+    try:
+        # Start the webcam stream using streamlit-webrtc
+        webrtc_streamer(
+            key="live-camera",
+            mode=WebRtcMode.SENDRECV,
+            video_processor_factory=VideoTransformer,
+            rtc_configuration=client_settings,
+            async_processing=True,  # Enable async processing
+            media_stream_constraints={"video": {"width": WEBCAM_WIDTH, "height": WEBCAM_HEIGHT}},
+        )
+    except Exception as e:
+        st.error(f"An error occurred with WebRTC: {e}")
+        logging.error("WebRTC error", exc_info=True)
