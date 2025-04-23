@@ -1,389 +1,328 @@
-# to run this script: streamlit run app.py
+import requests
 import streamlit as st
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
-from collections import Counter
-import time
-import tempfile
-from ultralytics import YOLO
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, ClientSettings
 import av
+# import logging
+import os
+import tempfile
+
+from websocket import frame_buffer
+# Set the environment variable
+# os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+# logging.basicConfig(level=logging.WARNING)
+st.set_page_config(page_title="Ai Object Detection", page_icon="🤖")
+from PIL import Image
+from ultralytics import YOLO
 import cv2
+import numpy as np
+from io import BytesIO
+from streamlit_webrtc import (
+	ClientSettings,
+	VideoTransformerBase,
+	WebRtcMode,
+	webrtc_streamer,
+)
 import supervision as sv
+import numpy as np
+import glob
+import sys
+import time
+# Define the zone polygon
+zone_polygon_m = np.array([[160, 100], 
+			 [160, 380], 
+			 [481, 380], 
+			 [481, 100]], dtype=np.int32)
+# # Calculate the center of the polygon
+# center = np.mean(zone_polygon_m, axis=0)
 
-# Constants
-COIN_CLASS_ID = 11  # 10sen coin
-COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
-CLASS_NAMES = {
-    0: 'long lag screw',
-    1: 'wood screw',
-    2: 'lag wood screw',
-    3: 'short wood screw',
-    4: 'shiny screw',
-    5: 'black oxide screw',
-    6: 'nut',
-    7: 'bolt',
-    8: 'large nut',
-    9: 'machine screw',
-    10: 'short machine screw',
-    11: '10sen Coin'
-}
-CATEGORY_COLORS = {
-    'long lag screw': (255, 0, 0),
-    'wood screw': (0, 255, 0),
-    'lag wood screw': (0, 0, 255),
-    'short wood screw': (255, 255, 0),
-    'shiny screw': (255, 0, 255),
-    'black oxide screw': (0, 255, 255),
-    'nut': (128, 0, 128),
-    'bolt': (255, 165, 0),
-    'large nut': (128, 128, 0),
-    'machine screw': (0, 128, 128),
-    'short machine screw': (128, 0, 0),
-    '10sen Coin': (192, 192, 192)
-}
-LABEL_FONT_SIZE = 20
-BORDER_WIDTH = 3
+# # Compute the vector from the center to each corner
+# vectors = zone_polygon_m - center
 
-model = YOLO("yolo11-obb12classes.pt")
+# # Scale each vector by 20%
+# expanded_vectors = vectors * 1.2
+
+# # Added the expanded vectors to the center to get the new corners
+# zone_polygon_m = (expanded_vectors + center).astype(np.int32)
+# @st.cache_resource
+def load_yolo_model():
+    return YOLO("yolo11-obb12classes.pt")
+
+# Load the YOLO model (this will be cached)
+model = load_yolo_model()
+
+# Initialize the tracker, annotators and zone
+tracker = sv.ByteTrack()
+box_annotator = sv.BoundingBoxAnnotator()
+label_annotator = sv.LabelAnnotator()
+zone = sv.PolygonZone(polygon=zone_polygon_m, frame_resolution_wh=(642, 642))
+mask_annotator = sv.MaskAnnotator()
 
 
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.prev_time = time.time()
-        self.fps = 0
+zone_annotator = sv.PolygonZoneAnnotator(
+	zone=zone,
+	color=sv.Color.red(),
+	thickness=2,
+	text_thickness=4,
+	text_scale=2
+)
 
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        # Convert the frame to an image
-        img = Image.fromarray(frame.to_ndarray())
-        # img = frame.to_ndarray(format="bgr24").copy()
-        # Flip the image horizontally
-        # img = np.flip(img, axis=1)
-        results = model.predict(img)
+def draw_annotations(frame, boxes, masks, names):
+	for box, name in zip(boxes, names):
+		color = (0, 255, 0)  # Green color for bounding boxes
 
-        # Processing time for the current frame
-        curr_time = time.time()
-        exec_time = curr_time - self.prev_time
-        self.prev_time = curr_time
-        # Calculate FPS
-        self.fps = 1 / exec_time if exec_time != 0 else self.fps
+		# Draw bounding box
+		cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), color, 2)
 
-        # Convert frame to numpy array
-        img = frame.to_ndarray(format="bgr24")
+		# Check if masks are available
+		if masks is not None:
+			mask = masks[frame_buffer]
+			alpha = 0.3  # Transparency of masks
 
-        # Process the frame using your YOLO model
-        processed_frame, _, px_to_mm_ratio = process_frame(
-            img, model)
+			# Draw mask
+			frame[mask > 0] = frame[mask > 0] * (1 - alpha) + np.array(color) * alpha
 
-        # Return the processed frame
-        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
-            
-# Sidebar controls
-with st.sidebar:
-    st.header("Settings")
-    input_method = st.radio(
-        "Input Source",
-        ("Webcam (Live Camera)", "Upload Image", "Upload Video"),
-        index=0
-    )
-    IOU_THRESHOLD = st.slider("IoU Threshold (NMS)", 0.0, 1.0, 0.7, step=0.05)
-    CONFIDENCE_THRESHOLD = st.slider("Confidence Threshold", 0.0, 1.0, 0.5, step=0.05)
-    
-    if input_method == "Webcam (Live Camera)":
-        WEBCAM_WIDTH = st.slider("Webcam Width", 320, 1920, 640, step=160)
-        WEBCAM_HEIGHT = st.slider("Webcam Height", 240, 1080, 480, step=120)
-        SHOW_FPS = st.checkbox("Show FPS", value=True)
-    
-    SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
-    SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
+		# Display class name
+		cv2.putText(frame, name, (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-def get_text_size(draw, text, font):
-    if hasattr(draw, 'textbbox'):
-        bbox = draw.textbbox((0, 0), text, font=font)
-        return bbox[2] - bbox[0], bbox[3] - bbox[1]
-    else:
-        return draw.textsize(text, font=font)
+	return frame
 
-def non_max_suppression(detections, iou_threshold):
-    """Improved NMS for OBB that keeps multiple non-overlapping boxes"""
-    if len(detections) == 0:
-        return []
+# Define the initial confidence threshold
 
-    boxes = []
-    scores = []
-    classes = []
 
-    for det in detections:
-        if len(det.xyxy) > 0:
-            boxes.append(det.xyxy[0].cpu().numpy())
-            scores.append(det.conf[0].cpu().numpy())
-            classes.append(det.cls[0].cpu().numpy())
+def main():
+	st.title("🤖 Ai Object Detection")
+	st.subheader("YOLOv8 & Streamlit WebRTC Integration :)")
+	st.sidebar.title("Select an option ⤵️")
+	choice = st.sidebar.radio("", ("Live Webcam Predict", "Capture Image And Predict",":rainbow[Multiple Images Upload -]🖼️🖼️🖼️", "Upload Video"),
+							captions = ["Live Count in Zone. :red[(Slow)]🐌", "Click and Detect. :orange[(Recommended)] :green[(Super Fast)]⚡⚡", "Upload & Process Multiple Images. :orange[(Recommended)] :green[(Fast)]⚡", "Upload Video & Predict 🏗️:orange[(Work in Progress)]📽️🎞️"], index = 1)
+	conf = st.slider("Score threshold", 0.0, 1.0, 0.3, 0.05)
+	if choice == "Live Webcam Predict":
+		# conf = st.slider("Score threshold", 0.0, 1.0, 0.5, 0.05)
 
-    if not boxes:
-        return []
+		# Define the WebRTC client settings
+		client_settings = ClientSettings(
+			# rtc_configuration={
+			# 	"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+			# },
+			media_stream_constraints={
+				"video": True,
+				"audio": False,
+			},
+		)
 
-    boxes = np.array(boxes)
-    scores = np.array(scores)
-    classes = np.array(classes)
-    indices = np.argsort(scores)[::-1]
-    keep_indices = []
+		# Define the WebRTC video transformer
+		class ObjectDetector(VideoTransformerBase):
+			def __init__(self):
+				self.prev_time = time.time()
+				self.fps = 0
 
-    while len(indices) > 0:
-        current = indices[0]
-        keep_indices.append(current)
-        rest = indices[1:]
+			def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+				# Convert the frame to an image
+				img = Image.fromarray(frame.to_ndarray())
+				# img = frame.to_ndarray(format="bgr24").copy()
+				# Flip the image horizontally
+				# img = np.flip(img, axis=1)
+				results = model.predict(img)
 
-        ious = []
-        for i in rest:
-            box1 = boxes[current]
-            box2 = boxes[i]
-            xA = max(box1[0], box2[0])
-            yA = max(box1[1], box2[1])
-            xB = min(box1[2], box2[2])
-            yB = min(box1[3], box2[3])
-            interArea = max(0, xB - xA) * max(0, yB - yA)
-            box1Area = (box1[2] - box1[0]) * (box1[3] - box1[1])
-            box2Area = (box2[2] - box2[0]) * (box2[3] - box2[1])
-            unionArea = box1Area + box2Area - interArea
-            iou = interArea / unionArea if unionArea > 0 else 0.0
-            ious.append(iou)
+				# Processing time for the current frame
+				curr_time = time.time()
+				exec_time = curr_time - self.prev_time
+				self.prev_time = curr_time
+				# Calculate FPS
+				self.fps = 1 / exec_time if exec_time != 0 else self.fps
 
-        ious = np.array(ious)
-        same_class = (classes[rest] == classes[current])
-        to_keep = ~(same_class & (ious > iou_threshold))
-        indices = rest[to_keep]
 
-    return [detections[i] for i in keep_indices]
+				if isinstance(results, list):
+					results1 = results[0]  
+				else:
+					results1 = results
+				
+				detections = sv.Detections.from_ultralytics(results1)
 
-def process_frame(frame, model, px_to_mm_ratio=None):
-    """Process a single frame and return annotated image and detection data"""
-    results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    
-    if not results:
-        return frame, [], px_to_mm_ratio
-    
-    result = results[0]
-    print("Object detected:", len(result))
-    filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
-    
-    pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    draw = ImageDraw.Draw(pil_image)
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
-    except:
-        font = ImageFont.load_default()
-        if hasattr(font, 'size'):
-            font.size = LABEL_FONT_SIZE
+				detections = detections[detections.confidence > conf]
 
-    detected_objects = []
-    current_px_to_mm_ratio = px_to_mm_ratio
-    
-    # Find coin for scaling
-    if current_px_to_mm_ratio is None:
-        for detection in filtered_detections:
-            if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
-                coin_xywhr = detection.xywhr[0]
-                width_px = coin_xywhr[2]
-                height_px = coin_xywhr[3]
-                avg_px_diameter = (width_px + height_px) / 2
-                if avg_px_diameter > 0:
-                    current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                break
+				labels = [
+					f"{results1.names[class_id]}"
+					for class_id in detections.class_id
+				]
 
-    # Draw detections
-    for detection in filtered_detections:
-        if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
-            class_id = int(detection.cls[0])
-            confidence = detection.conf[0]
-            x1, y1, x2, y2 = map(int, detection.xyxy[0])
-            class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
-            color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+				# Convert av.VideoFrame to NumPy array
+				frame_array = frame.to_ndarray(format="bgr24").copy()
+				# frame_array = np.flip(frame_array, axis=1)
+				annotated_frame1 = box_annotator.annotate(frame_array, detections=detections)
+				annotated_frame1 = label_annotator.annotate(annotated_frame1, detections=detections, labels=labels)
+				zone.trigger(detections=detections)
+				frame1 = zone_annotator.annotate(scene=annotated_frame1)
 
-            label_text = f"{class_name}"
-            if class_id != COIN_CLASS_ID:
-                detected_objects.append(class_name)
+				count_text = f"Objects in Zone: {zone.current_count}"
+				cv2.putText(frame1, count_text, (10, 30), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1, cv2.LINE_AA)
 
-            if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
-                diameter_px = (x2 - x1 + y2 - y1) / 2
-                diameter_mm = diameter_px * current_px_to_mm_ratio
-                label_text += f", Dia: {diameter_mm:.2f}mm"
-            elif class_id != COIN_CLASS_ID and current_px_to_mm_ratio:
-                xywhr = detection.xywhr[0]
-                width_px = xywhr[2]
-                height_px = xywhr[3]
-                length_px = max(width_px, height_px)
-                length_mm = length_px * current_px_to_mm_ratio
-                label_text += f", Length: {length_mm:.2f}mm"
-            elif class_id != COIN_CLASS_ID:
-                label_text += ", Length: N/A (No Coin)"
-            elif class_id == COIN_CLASS_ID:
-                label_text += ", Dia: N/A (No Ratio)"
+				# Overlay FPS on the frame
+				fps_text = f"FPS: {self.fps:.2f}"
+				cv2.putText(frame_array, fps_text, (10, 60), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1, cv2.LINE_AA)
 
-            if SHOW_DETECTIONS:
-                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
-                text_width, text_height = get_text_size(draw, label_text, font)
-                draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
-                draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
+				# Convert the frame back to av.VideoFrame
+				annotated_frame = av.VideoFrame.from_ndarray(frame1, format="bgr24")
+				return annotated_frame
 
-    return np.array(pil_image), detected_objects, current_px_to_mm_ratio
+		# Start the WebRTC streamer
+		webrtc_streamer(
+			key="object-detection",
+			mode=WebRtcMode.SENDRECV,
+			# rtc_configuration={
+			#     "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+			# },
+			media_stream_constraints={
+				"video": True,
+				"audio": False,
+			},
+			video_processor_factory=ObjectDetector,
+		)
+	elif choice == "Capture Image And Predict":
+		img_file_buffer = st.camera_input("Take a picture")
 
-def get_webcam_frame():
-    """Get frame from webcam with fallback to Streamlit camera"""
-    # Try direct OpenCV capture first
-    try:
-        cap = cv2.VideoCapture(0)  # Open the default webcam
-        if not cap.isOpened():
-            st.warning("Webcam could not be opened. Please check your camera settings.")
-            return None
+		if img_file_buffer is not None:
+			# To read image file buffer with OpenCV:
+			bytes_data = img_file_buffer.getvalue()
+			cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
+			results = model.predict(cv2_img)
 
-        ret, frame = cap.read()
-        if not ret:
-            st.warning("Failed to read frame from webcam.")
-            cap.release()
-            return None
+			if isinstance(results, list):
+				results1 = results[0]  
+			else:
+				results1 = results
+	
+			detections = sv.Detections.from_ultralytics(results1)
+			detections = detections[detections.confidence > conf]
+			labels = [
+				f"#{index + 1}: {results1.names[class_id]}"
+				for index, class_id in enumerate(detections.class_id)
+			]
 
-        cap.release()
-        return frame
-    except Exception as e:
-        st.warning(f"OpenCV webcam access failed: {e}")
-        return None
+			labels1 = [
+						f"#{index + 1}: {results1.names[class_id]} (Accuracy: {detections.confidence[index]:.2f})"
+						for index, class_id in enumerate(detections.class_id)
+					]
 
-    # Fallback to Streamlit's camera input
-    try:
-        img_file_buffer = st.camera_input("Take a picture")
-        if img_file_buffer is not None:
-            return cv2.imdecode(np.frombuffer(
-                img_file_buffer.getvalue(), 
-                np.uint8
-            ), cv2.IMREAD_COLOR)
-    except Exception as e:
-        st.error(f"Camera capture failed: {e}")
-    
-    return None
+			annotated_frame1 = box_annotator.annotate(cv2_img, detections=detections)
+			annotated_frame1 = label_annotator.annotate(annotated_frame1, detections=detections, labels=labels)
+			# Display the count on the screen
+			# count_text = f"Objects in Zone: {zone.current_count}"     # IMP
+			count_text = f"Objects in Frame: {len(detections)}" 
+			cv2.putText(annotated_frame1, count_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2, cv2.LINE_AA)
+			# Convert the frame back to av.VideoFrame
+			annotated_frame = av.VideoFrame.from_ndarray(annotated_frame1, format="bgr24")
+			st.image(annotated_frame.to_ndarray(), channels="BGR")
+			# Assuming results is an instance of ultralytics.engine.results.Results
+			st.write(':orange[ Info : ⤵️ ]')
+			st.json(labels1)
+			st.subheader("",divider='rainbow')
 
-# Main app
-st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
+	elif choice == ":rainbow[Multiple Images Upload -]🖼️🖼️🖼️":
+		uploaded_files = st.file_uploader("Choose a images", type=['png', 'jpg', 'webp', 'bmp'], accept_multiple_files=True)
+		for uploaded_file in uploaded_files:
+			bytes_data = uploaded_file.read()
+			st.write("filename:", uploaded_file.name)
+			bytes_data = uploaded_file.getvalue()
+			cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-frame_placeholder = st.empty()
-summary_placeholder = st.empty()
+			results = model.predict(cv2_img)
 
-if input_method == "Upload Image":
-    st.subheader("Upload or Capture an Image")
-    
-    # Option to upload an image
-    uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
-    
-    # Option to capture an image using the camera
-    captured_image = st.camera_input("Take a Picture")
-    
-    if uploaded_file is not None:
-        # Process uploaded image
-        image = Image.open(uploaded_file)
-        frame = np.array(image)
-    elif captured_image is not None:
-        # Process captured image
-        frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
-    else:
-        frame = None
+			if isinstance(results, list):
+				results1 = results[0]  
+			else:
+				results1 = results
+	
+			detections = sv.Detections.from_ultralytics(results1)
+			detections = detections[detections.confidence > conf]
+			labels = [
+				f"#{index + 1}: {results1.names[class_id]}"
+				for index, class_id in enumerate(detections.class_id)
+			]
 
-    if frame is not None:
-        processed_frame, detected_objects, _ = process_frame(frame, st.session_state.model)
-        frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
-        
-        if SHOW_SUMMARY and detected_objects:
-            screw_counts = Counter(detected_objects)
-            summary_text = "### ✨ Detection Summary ✨\n"
-            for name, count in screw_counts.items():
-                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
-        elif SHOW_SUMMARY:
-            summary_placeholder.info("No screws or nuts detected.")
+			labels1 = [
+						f"#{index + 1}: {results1.names[class_id]} (Accuracy: {detections.confidence[index]:.2f})"
+						for index, class_id in enumerate(detections.class_id)
+					]
+			
+			annotated_frame1 = mask_annotator.annotate(cv2_img,detections=detections)
+			annotated_frame1 = box_annotator.annotate(annotated_frame1, detections=detections)
+			annotated_frame1 = label_annotator.annotate(annotated_frame1, detections=detections, labels=labels)
+			
+			# Display the count on the screen
+			# count_text = f"Objects in Zone: {zone.current_count}"    
+			count_text = f"Objects in Frame: {len(detections)}" 
+			cv2.putText(annotated_frame1, count_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+			# Convert the frame back to av.VideoFrame
+			annotated_frame = av.VideoFrame.from_ndarray(annotated_frame1, format="bgr24")
+			# Display the annotated frame using st.image
+			# annotated_frame = results1[0].plot()
+			st.image(annotated_frame.to_ndarray(), channels="BGR")
+			# st.image(annotated_frame, channels="BGR")
+			st.write(':orange[ Info : ⤵️ ]')
+			st.json(labels1)
+			st.subheader("",divider='rainbow')
+	elif choice == "Upload Video":
+		# st.title("🏗️ Work in Progress 📽️ 🎞️")
+		
+		# Gaurang is Working on it...
+		clip = st.file_uploader("Choose a video file", type=['mp4'])
 
-elif input_method == "Upload Video":
-    st.subheader("Upload or Capture a Video")
-    
-    # Option to upload a video
-    uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
-    
-    # Option to capture a video using the camera
-    captured_video = st.camera_input("Record a Video")
-    
-    if uploaded_video is not None:
-        # Process uploaded video
-        tfile = tempfile.NamedTemporaryFile(delete=False) 
-        tfile.write(uploaded_video.read())
-        video_path = tfile.name
-    elif captured_video is not None:
-        # Process captured video
-        tfile = tempfile.NamedTemporaryFile(delete=False) 
-        tfile.write(captured_video.getvalue())
-        video_path = tfile.name
-    else:
-        video_path = None
+		if clip:
+			# Read the content of the video file
+			video_content = clip.read()
+			# Convert the video content to a bytes buffer
+			video_buffer = BytesIO(video_content)
+			st.video(video_buffer)
 
-    if video_path is not None:
-        cap = cv2.VideoCapture(video_path)
-        px_to_mm_ratio = None
-        all_detected_objects = []
-        
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-                
-            processed_frame, detected_objects, px_to_mm_ratio = process_frame(
-                frame, st.session_state.model, px_to_mm_ratio
-            )
-            
-            if detected_objects:
-                all_detected_objects.extend(detected_objects)
-            
-            frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
-            
-            if SHOW_SUMMARY and all_detected_objects:
-                screw_counts = Counter(all_detected_objects)
-                summary_text = "### ✨ Detection Summary ✨\n"
-                for name, count in screw_counts.items():
-                    color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                    summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-                summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
-            elif SHOW_SUMMARY:
-                summary_placeholder.info("No screws or nuts detected yet.")
-            
-            time.sleep(0.03)  # Control playback speed
-            
-        cap.release()
+			with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
+				temp_filename = temp_file.name
+				temp_file.write(video_content)
 
-elif input_method == "Webcam (Live Camera)":
-    st.subheader("Live Camera Detection")
+			with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file1:
+				temp_filename1 = temp_file1.name
+				output_path = temp_filename1
+				names = model.model.names
+				cap = cv2.VideoCapture(temp_filename)
+				w, h, fps = (int(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS))
+				# out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'VP90'), fps, (w, h))
+				out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'vp09'), fps, (w, h))
+				# out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
+				
+				while True:
+					ret, frame = cap.read()
+					
+					if not ret:
+						break  # Break the loop if there are no more frames
+					
+					results = model.predict(frame, conf= conf)
+					try:
+						annotated_frame = results[0].plot(masks=True)
+						# st.image(annotated_frame, caption='Frame', use_column_width=True)
+					except:
+						annotated_frame = results[0].plot(masks=False)
+						# st.image(annotated_frame, caption='Frame', use_column_width=True)
+					# st.image(annotated_frame, caption='Frame', use_column_width=True)
+					out.write(annotated_frame)
 
-    client_settings = ClientSettings(
-        rtc_configuration={
-            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
-        },
-        media_stream_constraints={"video": True, "audio": False},
-    )
-    # Start the webcam stream using streamlit-webrtc
-    import logging
 
-    # Configure logging
-    logging.basicConfig(level=logging.ERROR)
+				# Release VideoWriter object
+				out.release()
+				# Release VideoCapture object
+				cap.release()
 
-    try:
-        # Start the webcam stream using streamlit-webrtc
-        webrtc_streamer(
-            key="live-camera",
-            mode=WebRtcMode.SENDRECV,
-            video_processor_factory=VideoTransformer,
-            rtc_configuration=client_settings,
-            async_processing=True,  # Enable async processing
-            media_stream_constraints={"video": {"width": WEBCAM_WIDTH, "height": WEBCAM_HEIGHT}},
-        )
-    except Exception as e:
-        st.error(f"An error occurred with WebRTC: {e}")
-        logging.error("WebRTC error", exc_info=True)
+				st.video(output_path)
+				st.success("Video processing completed.")
+				st.write(output_path)
+			
+
+			# st.success("Video processing completed.")
+
+	
+	st.subheader("",divider='rainbow')
+	st.write(':orange[ Classes : ⤵️ ]')
+	cls_name = model.names
+	cls_lst = list(cls_name.values())
+	st.write(f':orange[{cls_lst}]')
+if __name__ == '__main__':
+	main()
