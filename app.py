@@ -6,12 +6,8 @@ import streamlit as st
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
 # Load the YOLOv8/YOLOv11 model
-# Replace with your model path or use a pretrained one
-model_path ="yolo11-obb12classes.pt"
+model = YOLO("yolo11-obb12classes.pt")
 
-# Load model
-model = torch.hub.load('ultralytics/yolov5', 'custom', path=model_path)  # yolov8 or yolov11 also works with .pt
-model.conf = 0.5  # Set confidence threshold
 
 # Define a label-color map
 def get_color(label):
