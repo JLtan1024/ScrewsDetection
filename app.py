@@ -48,24 +48,64 @@ BORDER_WIDTH = 3
 model = YOLO("yolo11-obb12classes.pt")
 
 
-class VideoTransformer(VideoProcessorBase):
+class VideoCallback:
     def __init__(self):
-        self.flip = False  # Example parameter to control frame processing
+        self.px_to_mm_ratio = None
+        self.all_detected_objects = []
+        self.frame_count = 0
+        self.start_time = time.time()
+    
+    def process_frame(self, frame):
+        # Convert from BGR to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process the frame with your YOLO model
+        processed_frame, detected_objects, self.px_to_mm_ratio = process_frame(
+            frame, model, self.px_to_mm_ratio
+        )
+        
+        # Update detected objects
+        if detected_objects:
+            self.all_detected_objects.extend(detected_objects)
+        
+        # Calculate FPS
+        self.frame_count += 1
+        elapsed_time = time.time() - self.start_time
+        fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
+        
+        # Convert back to BGR for display
+        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
+        
+        # Add FPS text if enabled
+        if SHOW_FPS:
+            cv2.putText(processed_frame, f"FPS: {fps:.1f}", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        return processed_frame
+    
+    def update_summary(self):
+        if SHOW_SUMMARY and self.all_detected_objects:
+            screw_counts = Counter(self.all_detected_objects)
+            summary_text = "### ✨ Detection Summary ✨\n"
+            for name, count in screw_counts.items():
+                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
+                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
+            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
+        elif SHOW_SUMMARY:
+            summary_placeholder.info("No screws or nuts detected yet.")
 
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        # Convert the frame to a numpy array
-        img = frame.to_ndarray(format="bgr24")
-
-        # Example processing: Flip the frame horizontally if self.flip is True
-        if self.flip:
-            img = cv2.flip(img, 1)
-
-        # Example processing: Add a rectangle overlay
-        height, width, _ = img.shape
-        cv2.rectangle(img, (50, 50), (width - 50, height - 50), (0, 255, 0), 2)
-
-        # Convert the processed frame back to an av.VideoFrame
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+    img = frame.to_ndarray(format="bgr24")
+    
+    # Process the frame
+    processed_img = webrtc_ctx.video_callback.process_frame(img)
+    
+    # Update summary periodically
+    if webrtc_ctx.video_callback.frame_count % 10 == 0:  # Update every 10 frames
+        webrtc_ctx.video_callback.update_summary()
+    
+    return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
+    
 
 # Sidebar controls
 with st.sidebar:
@@ -351,16 +391,26 @@ elif input_method == "Upload Video":
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
-
     
-    rtc_configuration = RTCConfiguration(
-        {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
-    )
-    video_processor  = VideoTransformer()
-    # Start the webcam stream using streamlit-webrtc
-    webrtc_streamer(
-        key="example-video-callback",
+    # Create WebRTC context
+    webrtc_ctx = webrtc_streamer(
+        key="screw-detection",
         mode=WebRtcMode.SENDRECV,
-        video_frame_callback= video_processor.recv,
-        media_stream_constraints={"video": True, "audio": False},
+        rtc_configuration=RTCConfiguration(
+            {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
+        ),
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={
+            "video": {
+                "width": {"ideal": WEBCAM_WIDTH},
+                "height": {"ideal": WEBCAM_HEIGHT},
+                "frameRate": {"ideal": 30}
+            },
+            "audio": False
+        },
+        async_processing=True
     )
+    
+    # Initialize video callback
+    if webrtc_ctx.video_callback is None:
+        webrtc_ctx.video_callback = VideoCallback()
