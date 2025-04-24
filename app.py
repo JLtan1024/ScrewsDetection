@@ -6,7 +6,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoProcessorBase, WebRtcMode, ClientSettings
+from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoProcessorBase, WebRtcMode
 import av
 import cv2
 import supervision as sv
