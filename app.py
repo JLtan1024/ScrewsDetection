@@ -6,7 +6,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoProcessorBase, WebRtcMode
+from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoProcessorBase, WebRtcMode, ClientSettings
 import av
 import cv2
 import supervision as sv
@@ -356,11 +356,11 @@ elif input_method == "Webcam (Live Camera)":
     rtc_configuration = RTCConfiguration(
         {"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}
     )
-
+    video_processor  = VideoTransformer()
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
         key="example-video-callback",
         mode=WebRtcMode.SENDRECV,
-        video_processor_factory=VideoTransformer,
+        video_frame_callback= video_processor.recv,
         media_stream_constraints={"video": True, "audio": False},
     )
