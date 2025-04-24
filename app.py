@@ -415,6 +415,3 @@ elif input_method == "Webcam (Live Camera)":
         async_processing=True
     )
     
-    # Initialize video callback
-    if webrtc_ctx.video_callback is None:
-        webrtc_ctx.video_callback = VideoCallback()
