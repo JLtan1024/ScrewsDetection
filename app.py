@@ -97,12 +97,16 @@ class VideoCallback:
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     img = frame.to_ndarray(format="bgr24")
     
+    # Get or create the video callback instance
+    if 'video_callback' not in st.session_state:
+        st.session_state.video_callback = VideoCallback()
+    
     # Process the frame
-    processed_img = webrtc_ctx.video_callback.process_frame(img)
+    processed_img = st.session_state.video_callback.process_frame(img)
     
     # Update summary periodically
-    if webrtc_ctx.video_callback.frame_count % 10 == 0:  # Update every 10 frames
-        webrtc_ctx.video_callback.update_summary()
+    if st.session_state.video_callback.frame_count % 10 == 0:  # Update every 10 frames
+        st.session_state.video_callback.update_summary()
     
     return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
     
