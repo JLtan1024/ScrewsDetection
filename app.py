@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import streamlit as st
 from streamlit_webrtc import webrtc_streamer, WebRtcMode
-
+from ultralytics import YOLO
 # Load the YOLOv8/YOLOv11 model
 model = YOLO("yolo11-obb12classes.pt")
 
