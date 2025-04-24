@@ -6,7 +6,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoTransformerBase, WebRtcMode
+from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoProcessorBase, WebRtcMode, ClientSettings
 import av
 import cv2
 import supervision as sv
@@ -48,35 +48,25 @@ BORDER_WIDTH = 3
 model = YOLO("yolo11-obb12classes.pt")
 
 
-class VideoTransformer(VideoTransformerBase):
+class VideoTransformer(VideoProcessorBase):
     def __init__(self):
-        self.prev_time = time.time()
-        self.fps = 0
+        self.flip = False  # Example parameter to control frame processing
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        # Convert the frame to an image
-        img = Image.fromarray(frame.to_ndarray())
-        # img = frame.to_ndarray(format="bgr24").copy()
-        # Flip the image horizontally
-        # img = np.flip(img, axis=1)
-        st.write(f"Frame shape: {img.size}")
-        # Processing time for the current frame
-        curr_time = time.time()
-        exec_time = curr_time - self.prev_time
-        self.prev_time = curr_time
-        # Calculate FPS
-        self.fps = 1 / exec_time if exec_time != 0 else self.fps
-
-        # Convert frame to numpy array
+        # Convert the frame to a numpy array
         img = frame.to_ndarray(format="bgr24")
-        st.write(f"Frame shape: {img.shape}")
-        # Process the frame using your YOLO model
-        processed_frame, _, px_to_mm_ratio = process_frame(
-            img, model)
 
-        # Return the processed frame
-        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
-            
+        # Example processing: Flip the frame horizontally if self.flip is True
+        if self.flip:
+            img = cv2.flip(img, 1)
+
+        # Example processing: Add a rectangle overlay
+        height, width, _ = img.shape
+        cv2.rectangle(img, (50, 50), (width - 50, height - 50), (0, 255, 0), 2)
+
+        # Convert the processed frame back to an av.VideoFrame
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
@@ -369,9 +359,8 @@ elif input_method == "Webcam (Live Camera)":
 
     # Start the webcam stream using streamlit-webrtc
     webrtc_streamer(
-        key="live-camera",
+        key="example-video-callback",
         mode=WebRtcMode.SENDRECV,
         video_processor_factory=VideoTransformer,
-        rtc_configuration=rtc_configuration,
-        async_processing=True,  # Enable async processing
+        media_stream_constraints={"video": True, "audio": False},
     )
