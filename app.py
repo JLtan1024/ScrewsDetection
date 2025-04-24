@@ -6,14 +6,10 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-
-# Try importing OpenCV with fallback
-try:
-    import cv2
-    CV2_AVAILABLE = True
-except ImportError:
-    CV2_AVAILABLE = False
-    st.warning("OpenCV not available - some features may be limited")
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, WebRtcMode, ClientSettings
+import av
+import cv2
+import supervision as sv
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -49,14 +45,38 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-# Initialize session state
-if 'model' not in st.session_state:
-    try:
-        st.session_state.model = YOLO("yolo11-obb12classes.pt")
-    except Exception as e:
-        st.error(f"Error loading YOLO model: {e}")
-        st.stop()
+model = YOLO("yolo11-obb12classes.pt")
 
+
+class VideoTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.prev_time = time.time()
+        self.fps = 0
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        # Convert the frame to an image
+        img = Image.fromarray(frame.to_ndarray())
+        # img = frame.to_ndarray(format="bgr24").copy()
+        # Flip the image horizontally
+        # img = np.flip(img, axis=1)
+        st.write(f"Frame shape: {img.size}")
+        # Processing time for the current frame
+        curr_time = time.time()
+        exec_time = curr_time - self.prev_time
+        self.prev_time = curr_time
+        # Calculate FPS
+        self.fps = 1 / exec_time if exec_time != 0 else self.fps
+
+        # Convert frame to numpy array
+        img = frame.to_ndarray(format="bgr24")
+        st.write(f"Frame shape: {img.shape}")
+        # Process the frame using your YOLO model
+        processed_frame, _, px_to_mm_ratio = process_frame(
+            img, model)
+
+        # Return the processed frame
+        return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
+            
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
@@ -137,11 +157,12 @@ def non_max_suppression(detections, iou_threshold):
 def process_frame(frame, model, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    
+    st.write(f"Results: {results}")
     if not results:
         return frame, [], px_to_mm_ratio
     
     result = results[0]
+    print("Object detected:", len(result))
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
     
     pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -171,6 +192,7 @@ def process_frame(frame, model, px_to_mm_ratio=None):
 
     # Draw detections
     for detection in filtered_detections:
+        st.write(f"Detection: {detection}")
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
             confidence = detection.conf[0]
@@ -338,60 +360,19 @@ elif input_method == "Upload Video":
         cap.release()
 
 elif input_method == "Webcam (Live Camera)":
-    if 'webcam_running' not in st.session_state:
-        st.session_state.webcam_running = False  # Initialize webcam state
+    st.subheader("Live Camera Detection")
 
-    # Buttons to control the webcam
-    col1, col2 = st.columns(2)
-    with col1:
-        start_button = st.button("Start Webcam")
-    with col2:
-        stop_button = st.button("Stop Webcam")
-
-    if start_button:
-        st.session_state.webcam_running = True  # Start the webcam
-    if stop_button:
-        st.session_state.webcam_running = False  # Stop the webcam
-
-    # Webcam processing logic
-    if st.session_state.webcam_running:
-        px_to_mm_ratio = None
-        all_detected_objects = []
-        fps = 0
-        prev_time = 0
-
-        cap = cv2.VideoCapture(0)  # Open the webcam
-        if not cap.isOpened():
-            st.error("Failed to open webcam. Please check your camera settings.")
-        else:
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
-
-            while st.session_state.webcam_running:
-                ret, frame = cap.read()
-                if not ret:
-                    st.error("Failed to capture frame from webcam.")
-                    break
-
-                processed_frame, detected_objects, px_to_mm_ratio = process_frame(
-                    frame, st.session_state.model, px_to_mm_ratio
-                )
-
-                if detected_objects:
-                    all_detected_objects.extend(detected_objects)
-
-                frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
-
-                if SHOW_SUMMARY and all_detected_objects:
-                    screw_counts = Counter(all_detected_objects)
-                    summary_text = "### ✨ Detection Summary ✨\n"
-                    for name, count in screw_counts.items():
-                        color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                        summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-                    summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
-                elif SHOW_SUMMARY:
-                    summary_placeholder.info("No screws or nuts detected yet.")
-
-                time.sleep(0.03)  # Control playback speed
-
-            cap.release()  # Release the webcam when done
+    client_settings = ClientSettings(
+        rtc_configuration={
+            "iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]
+        },
+        media_stream_constraints={"video": True, "audio": False},
+    )
+    # Start the webcam stream using streamlit-webrtc
+    webrtc_streamer(
+        key="live-camera",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=VideoTransformer,
+        rtc_configuration=client_settings,
+        async_processing=True,  # Enable async processing
+    )
