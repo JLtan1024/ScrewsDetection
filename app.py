@@ -29,6 +29,7 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
     return av.VideoFrame.from_ndarray(img, format="bgr24")
+    
 
 # Streamlit UI
 st.title("YOLO Real-Time Object Detection")
