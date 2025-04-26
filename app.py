@@ -46,8 +46,7 @@ BORDER_WIDTH = 3
 
 model = YOLO("yolo11-obb12classes.pt")
 
-# Initialize the SORT tracker
-tracker = Sort()
+
 
 # Initialize OpenCV MultiTracker
 multi_tracker = cv2.MultiTracker_create()
