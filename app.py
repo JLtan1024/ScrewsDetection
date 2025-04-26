@@ -354,100 +354,84 @@ if input_method == "Upload Image":
 
 elif input_method == "Upload Video":
     st.subheader("Video Input")
-
-    # Let the user choose between uploading or capturing a video
     video_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
 
     if video_input_method == "Upload":
-        # Option to upload a video
         uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
         if uploaded_video is not None:
-            # Save the uploaded video to a temporary file
             tfile = tempfile.NamedTemporaryFile(delete=False)
             tfile.write(uploaded_video.read())
             video_path = tfile.name
         else:
             video_path = None
     elif video_input_method == "Capture":
-        # Option to record a video using the camera
         captured_video = st.camera_input("Record a Video")
         if captured_video is not None:
-            # Save the captured video to a temporary file
             tfile = tempfile.NamedTemporaryFile(delete=False)
             tfile.write(captured_video.getvalue())
             video_path = tfile.name
         else:
             video_path = None
 
-    # Process and display the video if available
     if video_path is not None:
         cap = cv2.VideoCapture(video_path)
         px_to_mm_ratio = None
         all_detected_objects = []
-
-        # Get video properties
+        
+        # Initialize MultiTracker
+        multi_tracker = cv2.legacy.MultiTracker_create()
+        
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        # Placeholders for displaying the video frames
         col1, col2 = st.columns(2)
-
-        # Add labels for the columns
         with col1:
             st.markdown("### 🎥 Input Video")
             original_frame_placeholder = st.empty()
-
         with col2:
             st.markdown("### 🛠️ Processed Video")
             processed_frame_placeholder = st.empty()
 
-        progress_bar = st.progress(0)  # Add a progress bar
+        progress_bar = st.progress(0)
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         current_frame = 0
 
-        # Inside your video processing loop
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Process the frame with YOLO
-            processed_frame, detected_objects, px_to_mm_ratio = process_frame(
-                frame, px_to_mm_ratio
-            )
-
-            # Add new detections to the tracker
-            if current_frame == 0:  # Initialize trackers on the first frame
+            # Process the frame
+            processed_frame, detected_objects, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
+            
+            # Reset tracker on first frame or when we lose tracking
+            if current_frame == 0 or not multi_tracker.empty():
+                multi_tracker = cv2.legacy.MultiTracker_create()
                 for detection in detected_objects:
                     x1, y1, x2, y2 = detection["bbox"]
-                    tracker = cv2.TrackerCSRT_create()  # You can use other trackers like TrackerKCF
-                    multi_tracker.add(tracker, frame, (x1, y1, x2 - x1, y2 - y1))
+                    tracker = cv2.legacy.TrackerCSRT_create()
+                    try:
+                        multi_tracker.add(tracker, frame, (x1, y1, x2 - x1, y2 - y1))
+                    except:
+                        continue
 
             # Update trackers
             success, boxes = multi_tracker.update(frame)
+            
+            # Draw tracked objects
+            if success:
+                for box in boxes:
+                    x, y, w, h = [int(v) for v in box]
+                    cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-            # Draw tracked objects on the frame
-            for i, new_box in enumerate(boxes):
-                x, y, w, h = map(int, new_box)
-                cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.putText(processed_frame, f"ID: {i + 1}", (x, y - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-            # Display the processed frame
             processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
-
-            # Update progress bar
             current_frame += 1
             progress_bar.progress(min(current_frame / frame_count, 1.0))
-
-            # Control playback speed to match the original FPS
             time.sleep(1 / fps)
 
         cap.release()
 
-        # Display detection summary after processing
-        st.success("Video processing complete!")
         if SHOW_SUMMARY and all_detected_objects:
             screw_counts = Counter([obj["class_name"] for obj in all_detected_objects])
             summary_text = "### ✨ Detection Summary ✨\n"
