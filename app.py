@@ -176,7 +176,7 @@ def non_max_suppression(detections, iou_threshold):
             yB = min(box1[3], box2[3])
             interArea = max(0, xB - xA) * max(0, yB - yA)
             box1Area = (box1[2] - box1[0]) * (box1[3] - box1[1])
-            box2Area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+            box2Area = (box2[2] - box2[0]) * (box2[3] - box1[1])
             unionArea = box1Area + box2Area - interArea
             iou = interArea / unionArea if unionArea > 0 else 0.0
             ious.append(iou)
@@ -404,9 +404,11 @@ elif input_method == "Upload Video":
         cap.release()
         out.release()
 
-        # Display the processed video in Streamlit
+        # Ensure the video file is fully written before displaying
         st.success("Video processing complete!")
-        st.video(output_path)
+        with open(output_path, "rb") as video_file:
+            video_bytes = video_file.read()
+            st.video(output_path)  # Display the video in Streamlit
 
         # Provide a download link for the output video
         with open(output_path, "rb") as video_file:
