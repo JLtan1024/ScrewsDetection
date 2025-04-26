@@ -287,14 +287,21 @@ def show_summary():
     if SHOW_SUMMARY:
         # Get all unique detected objects from session state
         if hasattr(st.session_state, 'tracked_objects') and st.session_state.tracked_objects:
+            # Filter out the coin class
+            filtered_objects = {
+                obj_id: class_name
+                for obj_id, class_name in st.session_state.tracked_objects.items()
+                if class_name != "10sen Coin"
+            }
+            
             # Count objects by class name
-            class_counts = Counter(st.session_state.tracked_objects.values())
+            class_counts = Counter(filtered_objects.values())
             
             summary_text = "### ✨ Unique Detections ✨\n"
             
-            # Display total
-            total_objects = len(st.session_state.tracked_objects)
-            summary_text += f"- **Total unique objects detected: {total_objects}**\n\n"
+            # Display total (excluding the coin)
+            total_objects = len(filtered_objects)
+            summary_text += f"- **Total unique objects detected (excluding coin): {total_objects}**\n\n"
             
             # Display count for each category
             summary_text += "#### Breakdown by Category:\n"
