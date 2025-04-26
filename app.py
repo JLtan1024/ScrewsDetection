@@ -401,26 +401,14 @@ elif input_method == "Upload Video":
             # Write the processed frame to the output video
             out.write(cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR))
 
-            # Display the processed frame directly
-            st.image(processed_frame, channels="RGB")
-
-            if SHOW_SUMMARY and all_detected_objects:
-                screw_counts = Counter(all_detected_objects)
-                summary_text = "### ✨ Detection Summary ✨\n"
-                for name, count in screw_counts.items():
-                    color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                    summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-                st.markdown(summary_text, unsafe_allow_html=True)
-            elif SHOW_SUMMARY:
-                st.info("No screws or nuts detected yet.")
-
-            time.sleep(0.03)  # Control playback speed
-
         cap.release()
         out.release()
 
-        # Provide a download link for the output video
+        # Display the processed video in Streamlit
         st.success("Video processing complete!")
+        st.video(output_path)
+
+        # Provide a download link for the output video
         with open(output_path, "rb") as video_file:
             st.download_button(
                 label="Download Processed Video",
