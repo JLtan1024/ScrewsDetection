@@ -55,7 +55,7 @@ model = YOLO("yolo11-obb12classes.pt")
 
 # Initialize session state for tracking
 if 'tracked_objects' not in st.session_state:
-    st.session_state.tracked_objects = set()
+    st.session_state.tracked_objects = {}  # Changed from set to dict to store class info
 
 # Sidebar controls
 with st.sidebar:
@@ -79,7 +79,7 @@ with st.sidebar:
 
 # Reset counter if button pressed
 if RESET_COUNTER:
-    st.session_state.tracked_objects = set()
+    st.session_state.tracked_objects = {}  # Changed from set to empty dict
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
@@ -197,7 +197,8 @@ def process_frame(frame, px_to_mm_ratio=None):
                     "bbox": (x1, y1, x2, y2),
                     "confidence": float(confidence)
                 })
-                st.session_state.tracked_objects.add(obj_id)
+                # Store the class name with the object ID
+                st.session_state.tracked_objects[obj_id] = class_name
 
             label_text = f"{class_name}"
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
@@ -246,7 +247,7 @@ class VideoCallback:
         processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
         
         # Add FPS text if enabled
-        if SHOW_FPS:
+        if 'SHOW_FPS' in globals() and SHOW_FPS:
             cv2.putText(processed_frame, f"FPS: {fps:.1f}", (10, 30), 
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         
@@ -267,123 +268,147 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
+# Create placeholders for content
 frame_placeholder = st.empty()
-summary_placeholder = st.empty()
+main_content = st.container()  # Main content goes here
+
+# Create placeholder at the bottom for summary
+st.markdown("---")  # Add divider
+summary_placeholder = st.container()  # Summary will be displayed here
 
 def show_summary():
-    """Display the detection summary"""
+    """Display the detection summary with counts for each category"""
     if SHOW_SUMMARY:
         # Get all unique detected objects from session state
         if hasattr(st.session_state, 'tracked_objects') and st.session_state.tracked_objects:
-            # We need to reconstruct counts from the IDs (simplified example)
-            # In a real app, you'd store the class names with the IDs
+            # Count objects by class name
+            class_counts = Counter(st.session_state.tracked_objects.values())
+            
             summary_text = "### ✨ Unique Detections ✨\n"
-            # This is a placeholder - you'd need to track class names with IDs
-            summary_text += "- Total unique objects detected: **{}**\n".format(len(st.session_state.tracked_objects))
-            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
+            
+            # Display total
+            total_objects = len(st.session_state.tracked_objects)
+            summary_text += f"- **Total unique objects detected: {total_objects}**\n\n"
+            
+            # Display count for each category
+            summary_text += "#### Breakdown by Category:\n"
+            for class_name, count in sorted(class_counts.items()):
+                # Get color for this class
+                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+                color_hex = "#{:02x}{:02x}{:02x}".format(*color)
+                
+                # Add colored category count
+                summary_text += f"- <span style='color:{color_hex}'><b>{class_name}</b>: {count}</span>\n"
+            
+            with summary_placeholder:
+                st.markdown(summary_text, unsafe_allow_html=True)
         else:
-            summary_placeholder.info("No screws or nuts detected yet.")
+            with summary_placeholder:
+                st.info("No screws or nuts detected yet.")
 
 if input_method == "Upload Image":
-    st.subheader("Image Input")
-    image_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
+    with main_content:
+        st.subheader("Image Input")
+        image_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
 
-    if image_input_method == "Upload":
-        uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
-        if uploaded_file is not None:
-            image = Image.open(uploaded_file)
-            frame = np.array(image)
-        else:
-            frame = None
-    elif image_input_method == "Capture":
-        captured_image = st.camera_input("Take a Picture")
-        if captured_image is not None:
-            frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
-        else:
-            frame = None
+        if image_input_method == "Upload":
+            uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
+            if uploaded_file is not None:
+                image = Image.open(uploaded_file)
+                frame = np.array(image)
+            else:
+                frame = None
+        elif image_input_method == "Capture":
+            captured_image = st.camera_input("Take a Picture")
+            if captured_image is not None:
+                frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
+            else:
+                frame = None
 
-    if frame is not None:
-        processed_frame, detected_objects, _ = process_frame(frame)
-        st.image(processed_frame, channels="RGB")
-        show_summary()
+        if frame is not None:
+            processed_frame, detected_objects, _ = process_frame(frame)
+            st.image(processed_frame, channels="RGB")
+            show_summary()
 
 elif input_method == "Upload Video":
-    st.subheader("Video Input")
-    video_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
+    with main_content:
+        st.subheader("Video Input")
+        video_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
 
-    if video_input_method == "Upload":
-        uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
-        if uploaded_video is not None:
-            tfile = tempfile.NamedTemporaryFile(delete=False)
-            tfile.write(uploaded_video.read())
-            video_path = tfile.name
-        else:
-            video_path = None
-    elif video_input_method == "Capture":
-        captured_video = st.camera_input("Record a Video")
-        if captured_video is not None:
-            tfile = tempfile.NamedTemporaryFile(delete=False)
-            tfile.write(captured_video.getvalue())
-            video_path = tfile.name
-        else:
-            video_path = None
+        if video_input_method == "Upload":
+            uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
+            if uploaded_video is not None:
+                tfile = tempfile.NamedTemporaryFile(delete=False)
+                tfile.write(uploaded_video.read())
+                video_path = tfile.name
+            else:
+                video_path = None
+        elif video_input_method == "Capture":
+            captured_video = st.camera_input("Record a Video")
+            if captured_video is not None:
+                tfile = tempfile.NamedTemporaryFile(delete=False)
+                tfile.write(captured_video.getvalue())
+                video_path = tfile.name
+            else:
+                video_path = None
 
-    if video_path is not None:
-        cap = cv2.VideoCapture(video_path)
-        px_to_mm_ratio = None
+        if video_path is not None:
+            cap = cv2.VideoCapture(video_path)
+            px_to_mm_ratio = None
 
-        # Get video properties
-        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
+            # Get video properties
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        # Placeholders
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("### 🎥 Input Video")
-            original_frame_placeholder = st.empty()
-        with col2:
-            st.markdown("### 🛠️ Processed Video")
-            processed_frame_placeholder = st.empty()
+            # Placeholders
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("### 🎥 Input Video")
+                original_frame_placeholder = st.empty()
+            with col2:
+                st.markdown("### 🛠️ Processed Video")
+                processed_frame_placeholder = st.empty()
 
-        progress_bar = st.progress(0)
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        current_frame = 0
+            progress_bar = st.progress(0)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            current_frame = 0
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            # Process frame
-            processed_frame, _, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
+                # Process frame
+                processed_frame, _, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
 
-            # Display frames
-            original_frame_placeholder.image(frame, channels="RGB", use_column_width=True)
-            processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
+                # Display frames
+                original_frame_placeholder.image(frame, channels="RGB", use_column_width=True)
+                processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
 
-            # Update progress
-            current_frame += 1
-            progress_bar.progress(min(current_frame / frame_count, 1.0))
-            time.sleep(1 / fps)
+                # Update progress
+                current_frame += 1
+                progress_bar.progress(min(current_frame / frame_count, 1.0))
+                time.sleep(1 / fps)
 
-        cap.release()
-        show_summary()
+            cap.release()
+            show_summary()
 
 elif input_method == "Webcam (Live Camera)":
-    st.subheader("Live Camera Detection")
-    webrtc_ctx = webrtc_streamer(
-        key="screw-detection",
-        mode=WebRtcMode.SENDRECV,
-        video_frame_callback=video_frame_callback,
-        media_stream_constraints={
-            "video": {
-                "width": {"ideal": WEBCAM_WIDTH},
-                "height": {"ideal": WEBCAM_HEIGHT},
-                "frameRate": {"ideal": 30}
+    with main_content:
+        st.subheader("Live Camera Detection")
+        webrtc_ctx = webrtc_streamer(
+            key="screw-detection",
+            mode=WebRtcMode.SENDRECV,
+            video_frame_callback=video_frame_callback,
+            media_stream_constraints={
+                "video": {
+                    "width": {"ideal": WEBCAM_WIDTH},
+                    "height": {"ideal": WEBCAM_HEIGHT},
+                    "frameRate": {"ideal": 30}
+                },
+                "audio": False
             },
-            "audio": False
-        },
-        async_processing=True
-    )
-    show_summary()
+            async_processing=True
+        )
+        show_summary()
