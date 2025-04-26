@@ -382,8 +382,11 @@ elif input_method == "Upload Video":
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
-        # Placeholder for displaying the video frames
-        frame_placeholder = st.empty()
+        # Placeholders for displaying the video frames
+        col1, col2 = st.columns(2)
+        original_frame_placeholder = col1.empty()
+        processed_frame_placeholder = col2.empty()
+
         progress_bar = st.progress(0)  # Add a progress bar
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         current_frame = 0
@@ -402,8 +405,9 @@ elif input_method == "Upload Video":
             if detected_objects:
                 all_detected_objects.extend(detected_objects)
 
-            # Display the processed frame in real-time
-            frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
+            # Display the original and processed frames side by side
+            original_frame_placeholder.image(frame, channels="BGR", use_column_width=True)
+            processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
 
             # Update progress bar
             current_frame += 1
