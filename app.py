@@ -61,7 +61,7 @@ class VideoCallback:
         
         # Process the frame with your YOLO model
         processed_frame, detected_objects, self.px_to_mm_ratio = process_frame(
-            frame, model, self.px_to_mm_ratio
+            frame,  self.px_to_mm_ratio
         )
         
         # Update detected objects
@@ -188,7 +188,7 @@ def non_max_suppression(detections, iou_threshold):
 
     return [detections[i] for i in keep_indices]
 
-def process_frame(frame, model, px_to_mm_ratio=None):
+def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
     st.write(f"Results: {results}")
@@ -325,7 +325,7 @@ if input_method == "Upload Image":
         frame = None
 
     if frame is not None:
-        processed_frame, detected_objects, _ = process_frame(frame, st.session_state.model)
+        processed_frame, detected_objects, _ = process_frame(frame)
         frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
         
         if SHOW_SUMMARY and detected_objects:
@@ -371,7 +371,7 @@ elif input_method == "Upload Video":
                 break
                 
             processed_frame, detected_objects, px_to_mm_ratio = process_frame(
-                frame, st.session_state.model, px_to_mm_ratio
+                frame, px_to_mm_ratio
             )
             
             if detected_objects:
