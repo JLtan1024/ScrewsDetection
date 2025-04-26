@@ -306,27 +306,27 @@ frame_placeholder = st.empty()
 summary_placeholder = st.empty()
 
 if input_method == "Upload Image":
-    st.subheader("Upload or Capture an Image")
-    
-    # Option to upload an image
-    uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
+    st.subheader("Capture or Upload an Image")
     
     # Option to capture an image using the camera
     captured_image = st.camera_input("Take a Picture")
     
-    if uploaded_file is not None:
+    # Option to upload an image
+    uploaded_file = st.file_uploader("Or Upload an Image", type=["jpg", "png", "jpeg"])
+    
+    if captured_image is not None:
+        # Process captured image
+        frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
+    elif uploaded_file is not None:
         # Process uploaded image
         image = Image.open(uploaded_file)
         frame = np.array(image)
-    elif captured_image is not None:
-        # Process captured image
-        frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
     else:
         frame = None
 
     if frame is not None:
         processed_frame, detected_objects, _ = process_frame(frame)
-        frame_placeholder.image(processed_frame, channels="RGB")
+        st.image(processed_frame, channels="RGB")
         
         if SHOW_SUMMARY and detected_objects:
             screw_counts = Counter(detected_objects)
@@ -334,28 +334,28 @@ if input_method == "Upload Image":
             for name, count in screw_counts.items():
                 color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
                 summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
+            st.markdown(summary_text, unsafe_allow_html=True)
         elif SHOW_SUMMARY:
-            summary_placeholder.info("No screws or nuts detected.")
+            st.info("No screws or nuts detected.")
 
 elif input_method == "Upload Video":
-    st.subheader("Upload or Capture a Video")
+    st.subheader("Record or Upload a Video")
     
-    # Option to upload a video
-    uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
-    
-    # Option to capture a video using the camera
+    # Option to record a video using the camera
     captured_video = st.camera_input("Record a Video")
     
-    if uploaded_video is not None:
-        # Process uploaded video
-        tfile = tempfile.NamedTemporaryFile(delete=False) 
-        tfile.write(uploaded_video.read())
-        video_path = tfile.name
-    elif captured_video is not None:
+    # Option to upload a video
+    uploaded_video = st.file_uploader("Or Upload a Video", type=["mp4", "avi", "mov"])
+    
+    if captured_video is not None:
         # Process captured video
         tfile = tempfile.NamedTemporaryFile(delete=False) 
         tfile.write(captured_video.getvalue())
+        video_path = tfile.name
+    elif uploaded_video is not None:
+        # Process uploaded video
+        tfile = tempfile.NamedTemporaryFile(delete=False) 
+        tfile.write(uploaded_video.read())
         video_path = tfile.name
     else:
         video_path = None
