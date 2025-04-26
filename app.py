@@ -10,8 +10,6 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 import cv2
 import supervision as sv
-from sort import Sort  # Import the SORT tracker
-
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
 COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
@@ -50,6 +48,9 @@ model = YOLO("yolo11-obb12classes.pt")
 
 # Initialize the SORT tracker
 tracker = Sort()
+
+# Initialize OpenCV MultiTracker
+multi_tracker = cv2.MultiTracker_create()
 
 
 class VideoCallback:
@@ -406,6 +407,7 @@ elif input_method == "Upload Video":
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         current_frame = 0
 
+        # Inside your video processing loop
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -416,21 +418,21 @@ elif input_method == "Upload Video":
                 frame, px_to_mm_ratio
             )
 
-            # Prepare detections for SORT (x1, y1, x2, y2, confidence)
-            detections = []
-            for detection in detected_objects:
-                x1, y1, x2, y2 = detection["bbox"]
-                confidence = detection["confidence"]
-                detections.append([x1, y1, x2, y2, confidence])
+            # Add new detections to the tracker
+            if current_frame == 0:  # Initialize trackers on the first frame
+                for detection in detected_objects:
+                    x1, y1, x2, y2 = detection["bbox"]
+                    tracker = cv2.TrackerCSRT_create()  # You can use other trackers like TrackerKCF
+                    multi_tracker.add(tracker, frame, (x1, y1, x2 - x1, y2 - y1))
 
-            # Update the tracker with the current frame's detections
-            tracked_objects = tracker.update(np.array(detections))
+            # Update trackers
+            success, boxes = multi_tracker.update(frame)
 
             # Draw tracked objects on the frame
-            for obj in tracked_objects:
-                x1, y1, x2, y2, obj_id = map(int, obj[:5])
-                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(processed_frame, f"ID: {obj_id}", (x1, y1 - 10),
+            for i, new_box in enumerate(boxes):
+                x, y, w, h = map(int, new_box)
+                cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.putText(processed_frame, f"ID: {i + 1}", (x, y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
             # Display the processed frame
