@@ -377,7 +377,8 @@ elif input_method == "Upload Video":
             if detected_objects:
                 all_detected_objects.extend(detected_objects)
             
-            frame_placeholder.image(processed_frame, channels="RGB")
+            # Display the processed frame directly
+            st.image(processed_frame, channels="RGB")
             
             if SHOW_SUMMARY and all_detected_objects:
                 screw_counts = Counter(all_detected_objects)
@@ -385,9 +386,9 @@ elif input_method == "Upload Video":
                 for name, count in screw_counts.items():
                     color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
                     summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-                summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
+                st.markdown(summary_text, unsafe_allow_html=True)
             elif SHOW_SUMMARY:
-                summary_placeholder.info("No screws or nuts detected yet.")
+                st.info("No screws or nuts detected yet.")
             
             time.sleep(0.03)  # Control playback speed
             
@@ -411,4 +412,4 @@ elif input_method == "Webcam (Live Camera)":
         },
         async_processing=True
     )
-    
+
