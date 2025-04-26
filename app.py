@@ -191,7 +191,6 @@ def non_max_suppression(detections, iou_threshold):
 def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    st.write(f"Results: {results}")
     if not results:
         return frame, [], px_to_mm_ratio
     
@@ -226,7 +225,7 @@ def process_frame(frame, px_to_mm_ratio=None):
 
     # Draw detections
     for detection in filtered_detections:
-        st.write(f"Detection: {detection}")
+        
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
             confidence = detection.conf[0]
@@ -377,6 +376,16 @@ elif input_method == "Upload Video":
         px_to_mm_ratio = None
         all_detected_objects = []
 
+        # Get video properties
+        frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        output_path = "output_video.mp4"
+
+        # Initialize VideoWriter
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
+        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
@@ -388,6 +397,9 @@ elif input_method == "Upload Video":
 
             if detected_objects:
                 all_detected_objects.extend(detected_objects)
+
+            # Write the processed frame to the output video
+            out.write(cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR))
 
             # Display the processed frame directly
             st.image(processed_frame, channels="RGB")
@@ -405,6 +417,17 @@ elif input_method == "Upload Video":
             time.sleep(0.03)  # Control playback speed
 
         cap.release()
+        out.release()
+
+        # Provide a download link for the output video
+        st.success("Video processing complete!")
+        with open(output_path, "rb") as video_file:
+            st.download_button(
+                label="Download Processed Video",
+                data=video_file,
+                file_name="processed_video.mp4",
+                mime="video/mp4"
+            )
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
