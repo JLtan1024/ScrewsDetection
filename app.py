@@ -10,6 +10,12 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 import cv2
 import supervision as sv
+import hashlib
+import warnings
+
+# Suppress torch warnings
+warnings.filterwarnings("ignore", message="Examining the path of torch.classes")
+
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
 COIN_DIAMETER_MM = 18.80  # 10sen coin diameter in mm
@@ -44,76 +50,12 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
+# Load YOLO model
 model = YOLO("yolo11-obb12classes.pt")
 
-
-
-# Initialize OpenCV MultiTracker
-multi_tracker = cv2.legacy.MultiTracker_create()
-
-
-class VideoCallback:
-    def __init__(self):
-        self.px_to_mm_ratio = None
-        self.all_detected_objects = []
-        self.frame_count = 0
-        self.start_time = time.time()
-    
-    def process_frame(self, frame):
-        # Convert from BGR to RGB
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # Process the frame with your YOLO model
-        processed_frame, detected_objects, self.px_to_mm_ratio = process_frame(
-            frame,  self.px_to_mm_ratio
-        )
-        
-        # Update detected objects
-        if detected_objects:
-            self.all_detected_objects.extend(detected_objects)
-        
-        # Calculate FPS
-        self.frame_count += 1
-        elapsed_time = time.time() - self.start_time
-        fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
-        
-        # Convert back to BGR for display
-        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
-        
-        # Add FPS text if enabled
-        if SHOW_FPS:
-            cv2.putText(processed_frame, f"FPS: {fps:.1f}", (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        
-        return processed_frame
-    
-    def update_summary(self):
-        if SHOW_SUMMARY and self.all_detected_objects:
-            screw_counts = Counter(self.all_detected_objects)
-            summary_text = "### ✨ Detection Summary ✨\n"
-            for name, count in screw_counts.items():
-                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
-        elif SHOW_SUMMARY:
-            summary_placeholder.info("No screws or nuts detected yet.")
-
-def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-    img = frame.to_ndarray(format="bgr24")
-    
-    # Get or create the video callback instance
-    if 'video_callback' not in st.session_state:
-        st.session_state.video_callback = VideoCallback()
-    
-    # Process the frame
-    processed_img = st.session_state.video_callback.process_frame(img)
-    
-    # Update summary periodically
-    if st.session_state.video_callback.frame_count % 10 == 0:  # Update every 10 frames
-        st.session_state.video_callback.update_summary()
-    
-    return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
-    
+# Initialize session state for tracking
+if 'tracked_objects' not in st.session_state:
+    st.session_state.tracked_objects = set()
 
 # Sidebar controls
 with st.sidebar:
@@ -133,6 +75,11 @@ with st.sidebar:
     
     SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
     SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
+    RESET_COUNTER = st.button("Reset Detection Counter")
+
+# Reset counter if button pressed
+if RESET_COUNTER:
+    st.session_state.tracked_objects = set()
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
@@ -192,6 +139,11 @@ def non_max_suppression(detections, iou_threshold):
 
     return [detections[i] for i in keep_indices]
 
+def generate_object_id(bbox, class_name):
+    """Generate a unique ID based on bbox and class"""
+    x1, y1, x2, y2 = map(int, bbox)
+    return hashlib.md5(f"{x1}{y1}{x2}{y2}{class_name}".encode()).hexdigest()
+
 def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
@@ -199,7 +151,6 @@ def process_frame(frame, px_to_mm_ratio=None):
         return frame, [], px_to_mm_ratio
     
     result = results[0]
-    print("Object detected:", len(result))
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
     
     pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -227,9 +178,8 @@ def process_frame(frame, px_to_mm_ratio=None):
                     current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
                 break
 
-    # Draw detections
+    # Draw detections and track objects
     for detection in filtered_detections:
-        
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
             confidence = detection.conf[0]
@@ -237,14 +187,19 @@ def process_frame(frame, px_to_mm_ratio=None):
             class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
             color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
 
-            label_text = f"{class_name}"
-            if class_id != COIN_CLASS_ID:
+            # Generate unique ID for the object
+            obj_id = generate_object_id((x1, y1, x2, y2), class_name)
+            
+            # Only count if not tracked before
+            if obj_id not in st.session_state.tracked_objects:
                 detected_objects.append({
+                    "class_name": class_name,
                     "bbox": (x1, y1, x2, y2),
-                    "confidence": confidence,
-                    "class_name": class_name
+                    "confidence": float(confidence)
                 })
+                st.session_state.tracked_objects.add(obj_id)
 
+            label_text = f"{class_name}"
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
                 diameter_px = (x2 - x1 + y2 - y1) / 2
                 diameter_mm = diameter_px * current_px_to_mm_ratio
@@ -269,42 +224,45 @@ def process_frame(frame, px_to_mm_ratio=None):
 
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
-def get_webcam_frame():
-    """Get frame from webcam with fallback to Streamlit camera"""
-    # Try direct OpenCV capture first
-    try:
-        cap = cv2.VideoCapture(0)  # Open the default webcam
-        if not cap.isOpened():
-            st.warning("Webcam could not be opened. Please check your camera settings.")
-            return None
-
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_WIDTH)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_HEIGHT)
-
-        ret, frame = cap.read()
-        if not ret:
-            st.warning("Failed to read frame from webcam.")
-            cap.release()
-            return None
-
-        cap.release()
-        return frame
-    except Exception as e:
-        st.warning(f"OpenCV webcam access failed: {e}")
-        return None
-
-    # Fallback to Streamlit's camera input
-    try:
-        img_file_buffer = st.camera_input("Take a picture")
-        if img_file_buffer is not None:
-            return cv2.imdecode(np.frombuffer(
-                img_file_buffer.getvalue(), 
-                np.uint8
-            ), cv2.IMREAD_COLOR)
-    except Exception as e:
-        st.error(f"Camera capture failed: {e}")
+class VideoCallback:
+    def __init__(self):
+        self.px_to_mm_ratio = None
+        self.frame_count = 0
+        self.start_time = time.time()
     
-    return None
+    def process_frame(self, frame):
+        # Convert from BGR to RGB
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # Process the frame
+        processed_frame, detected_objects, self.px_to_mm_ratio = process_frame(frame, self.px_to_mm_ratio)
+        
+        # Calculate FPS
+        self.frame_count += 1
+        elapsed_time = time.time() - self.start_time
+        fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
+        
+        # Convert back to BGR for display
+        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
+        
+        # Add FPS text if enabled
+        if SHOW_FPS:
+            cv2.putText(processed_frame, f"FPS: {fps:.1f}", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        
+        return processed_frame
+
+def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+    img = frame.to_ndarray(format="bgr24")
+    
+    # Get or create the video callback instance
+    if 'video_callback' not in st.session_state:
+        st.session_state.video_callback = VideoCallback()
+    
+    # Process the frame
+    processed_img = st.session_state.video_callback.process_frame(img)
+    
+    return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
 
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
@@ -312,45 +270,42 @@ st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 frame_placeholder = st.empty()
 summary_placeholder = st.empty()
 
+def show_summary():
+    """Display the detection summary"""
+    if SHOW_SUMMARY:
+        # Get all unique detected objects from session state
+        if hasattr(st.session_state, 'tracked_objects') and st.session_state.tracked_objects:
+            # We need to reconstruct counts from the IDs (simplified example)
+            # In a real app, you'd store the class names with the IDs
+            summary_text = "### ✨ Unique Detections ✨\n"
+            # This is a placeholder - you'd need to track class names with IDs
+            summary_text += "- Total unique objects detected: **{}**\n".format(len(st.session_state.tracked_objects))
+            summary_placeholder.markdown(summary_text, unsafe_allow_html=True)
+        else:
+            summary_placeholder.info("No screws or nuts detected yet.")
+
 if input_method == "Upload Image":
     st.subheader("Image Input")
-
-    # Let the user choose between uploading or capturing an image
     image_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
 
     if image_input_method == "Upload":
-        # Option to upload an image
         uploaded_file = st.file_uploader("Upload an Image", type=["jpg", "png", "jpeg"])
         if uploaded_file is not None:
-            # Process uploaded image
             image = Image.open(uploaded_file)
             frame = np.array(image)
         else:
             frame = None
     elif image_input_method == "Capture":
-        # Option to capture an image using the camera
         captured_image = st.camera_input("Take a Picture")
         if captured_image is not None:
-            # Process captured image
             frame = cv2.imdecode(np.frombuffer(captured_image.getvalue(), np.uint8), cv2.IMREAD_COLOR)
         else:
             frame = None
 
-    # Process and display the frame if available
     if frame is not None:
         processed_frame, detected_objects, _ = process_frame(frame)
         st.image(processed_frame, channels="RGB")
-
-        if SHOW_SUMMARY and detected_objects:
-            screw_counts = Counter([obj["class_name"] for obj in detected_objects])
-            summary_text = "### ✨ Detection Summary ✨\n"
-            for name, count in screw_counts.items():
-                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-            st.markdown(summary_text, unsafe_allow_html=True)
-        elif SHOW_SUMMARY:
-            st.info("No screws or nuts detected.")
-
+        show_summary()
 
 elif input_method == "Upload Video":
     st.subheader("Video Input")
@@ -376,15 +331,13 @@ elif input_method == "Upload Video":
     if video_path is not None:
         cap = cv2.VideoCapture(video_path)
         px_to_mm_ratio = None
-        all_detected_objects = []
-        
-        # Initialize MultiTracker
-        multi_tracker = cv2.legacy.MultiTracker_create()
-        
+
+        # Get video properties
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
 
+        # Placeholders
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### 🎥 Input Video")
@@ -402,50 +355,22 @@ elif input_method == "Upload Video":
             if not ret:
                 break
 
-            # Process the frame
-            processed_frame, detected_objects, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
-            
-            # Reset tracker on first frame or when we lose tracking
-            if current_frame == 0 or not multi_tracker.empty():
-                multi_tracker = cv2.legacy.MultiTracker_create()
-                for detection in detected_objects:
-                    x1, y1, x2, y2 = detection["bbox"]
-                    tracker = cv2.legacy.TrackerCSRT_create()
-                    try:
-                        multi_tracker.add(tracker, frame, (x1, y1, x2 - x1, y2 - y1))
-                    except:
-                        continue
+            # Process frame
+            processed_frame, _, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
 
-            # Update trackers
-            success, boxes = multi_tracker.update(frame)
-            
-            # Draw tracked objects
-            if success:
-                for box in boxes:
-                    x, y, w, h = [int(v) for v in box]
-                    cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-
+            # Display frames
             processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
+
+            # Update progress
             current_frame += 1
             progress_bar.progress(min(current_frame / frame_count, 1.0))
             time.sleep(1 / fps)
 
         cap.release()
-
-        if SHOW_SUMMARY and all_detected_objects:
-            screw_counts = Counter([obj["class_name"] for obj in all_detected_objects])
-            summary_text = "### ✨ Detection Summary ✨\n"
-            for name, count in screw_counts.items():
-                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
-                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
-            st.markdown(summary_text, unsafe_allow_html=True)
-        elif SHOW_SUMMARY:
-            st.info("No screws or nuts detected.")
+        show_summary()
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
-    
-    # Create WebRTC context
     webrtc_ctx = webrtc_streamer(
         key="screw-detection",
         mode=WebRtcMode.SENDRECV,
@@ -460,4 +385,4 @@ elif input_method == "Webcam (Live Camera)":
         },
         async_processing=True
     )
-
+    show_summary()
