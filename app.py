@@ -359,6 +359,7 @@ elif input_method == "Upload Video":
             processed_frame, _, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
 
             # Display frames
+            original_frame_placeholder.image(frame, channels="RGB", use_column_width=True)
             processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
 
             # Update progress
