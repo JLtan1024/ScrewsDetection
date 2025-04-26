@@ -408,6 +408,7 @@ elif input_method == "Upload Video":
         st.success("Video processing complete!")
         with open(output_path, "rb") as video_file:
             video_bytes = video_file.read()
+            st.write("### Processed Video")
             st.video(video_bytes)  # Display the video in Streamlit
 
         # Provide a download link for the output video
