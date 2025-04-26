@@ -384,8 +384,15 @@ elif input_method == "Upload Video":
 
         # Placeholders for displaying the video frames
         col1, col2 = st.columns(2)
-        original_frame_placeholder = col1.empty()
-        processed_frame_placeholder = col2.empty()
+
+        # Add labels for the columns
+        with col1:
+            st.markdown("### 🎥 Input Video")
+            original_frame_placeholder = st.empty()
+
+        with col2:
+            st.markdown("### 🛠️ Processed Video")
+            processed_frame_placeholder = st.empty()
 
         progress_bar = st.progress(0)  # Add a progress bar
         frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
