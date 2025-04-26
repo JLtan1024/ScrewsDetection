@@ -265,6 +265,12 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     
     return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
 
+# Function to reset detection summary
+def reset_detection_summary():
+    st.session_state.tracked_objects = {}
+    with summary_placeholder:
+        st.empty()
+
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
 
@@ -307,6 +313,7 @@ def show_summary():
                 st.info("No screws or nuts detected yet.")
 
 if input_method == "Upload Image":
+    reset_detection_summary()  # Clear summary
     with main_content:
         st.subheader("Image Input")
         image_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
@@ -331,6 +338,7 @@ if input_method == "Upload Image":
             show_summary()
 
 elif input_method == "Upload Video":
+    reset_detection_summary()  # Clear summary
     with main_content:
         st.subheader("Video Input")
         video_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
@@ -395,6 +403,7 @@ elif input_method == "Upload Video":
             show_summary()
 
 elif input_method == "Webcam (Live Camera)":
+    reset_detection_summary()  # Clear summary
     with main_content:
         st.subheader("Live Camera Detection")
         webrtc_ctx = webrtc_streamer(
