@@ -343,6 +343,7 @@ if input_method == "Upload Image":
         elif SHOW_SUMMARY:
             st.info("No screws or nuts detected.")
 
+
 elif input_method == "Upload Video":
     st.subheader("Video Input")
 
@@ -353,7 +354,7 @@ elif input_method == "Upload Video":
         # Option to upload a video
         uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
         if uploaded_video is not None:
-            # Process uploaded video
+            # Save the uploaded video to a temporary file
             tfile = tempfile.NamedTemporaryFile(delete=False)
             tfile.write(uploaded_video.read())
             video_path = tfile.name
@@ -363,7 +364,7 @@ elif input_method == "Upload Video":
         # Option to record a video using the camera
         captured_video = st.camera_input("Record a Video")
         if captured_video is not None:
-            # Process captured video
+            # Save the captured video to a temporary file
             tfile = tempfile.NamedTemporaryFile(delete=False)
             tfile.write(captured_video.getvalue())
             video_path = tfile.name
@@ -380,45 +381,50 @@ elif input_method == "Upload Video":
         frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = int(cap.get(cv2.CAP_PROP_FPS))
-        output_path = "output_video.mp4"
 
-        # Initialize VideoWriter
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec for MP4
-        out = cv2.VideoWriter(output_path, fourcc, fps, (frame_width, frame_height))
+        # Placeholder for displaying the video frames
+        frame_placeholder = st.empty()
+        progress_bar = st.progress(0)  # Add a progress bar
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        current_frame = 0
 
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
+            # Process the frame
             processed_frame, detected_objects, px_to_mm_ratio = process_frame(
                 frame, px_to_mm_ratio
             )
 
+            # Update detected objects
             if detected_objects:
                 all_detected_objects.extend(detected_objects)
 
-            # Write the processed frame to the output video
-            out.write(cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR))
+            # Display the processed frame in real-time
+            frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
+
+            # Update progress bar
+            current_frame += 1
+            progress_bar.progress(min(current_frame / frame_count, 1.0))
+
+            # Control playback speed to match the original FPS
+            time.sleep(1 / fps)
 
         cap.release()
-        out.release()
 
-        # Ensure the video file is fully written before displaying
+        # Display detection summary after processing
         st.success("Video processing complete!")
-        with open(output_path, "rb") as video_file:
-            video_bytes = video_file.read()
-            st.write("### Processed Video")
-            st.video(video_bytes)  # Display the video in Streamlit
-
-        # Provide a download link for the output video
-        with open(output_path, "rb") as video_file:
-            st.download_button(
-                label="Download Processed Video",
-                data=video_file,
-                file_name="processed_video.mp4",
-                mime="video/mp4"
-            )
+        if SHOW_SUMMARY and all_detected_objects:
+            screw_counts = Counter(all_detected_objects)
+            summary_text = "### ✨ Detection Summary ✨\n"
+            for name, count in screw_counts.items():
+                color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
+                summary_text += f"- <span style='color: {color}'>{name}:</span> **{count}**\n"
+            st.markdown(summary_text, unsafe_allow_html=True)
+        elif SHOW_SUMMARY:
+            st.info("No screws or nuts detected.")
 
 elif input_method == "Webcam (Live Camera)":
     st.subheader("Live Camera Detection")
