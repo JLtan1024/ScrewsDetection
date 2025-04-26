@@ -10,6 +10,7 @@ from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 import cv2
 import supervision as sv
+from sort import Sort  # Import the SORT tracker
 
 # Constants
 COIN_CLASS_ID = 11  # 10sen coin
@@ -46,6 +47,9 @@ LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
 model = YOLO("yolo11-obb12classes.pt")
+
+# Initialize the SORT tracker
+tracker = Sort()
 
 
 class VideoCallback:
@@ -235,7 +239,11 @@ def process_frame(frame, px_to_mm_ratio=None):
 
             label_text = f"{class_name}"
             if class_id != COIN_CLASS_ID:
-                detected_objects.append(class_name)
+                detected_objects.append({
+                    "bbox": (x1, y1, x2, y2),
+                    "confidence": confidence,
+                    "class_name": class_name
+                })
 
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
                 diameter_px = (x2 - x1 + y2 - y1) / 2
@@ -334,7 +342,7 @@ if input_method == "Upload Image":
         st.image(processed_frame, channels="RGB")
 
         if SHOW_SUMMARY and detected_objects:
-            screw_counts = Counter(detected_objects)
+            screw_counts = Counter([obj["class_name"] for obj in detected_objects])
             summary_text = "### ✨ Detection Summary ✨\n"
             for name, count in screw_counts.items():
                 color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
@@ -403,17 +411,29 @@ elif input_method == "Upload Video":
             if not ret:
                 break
 
-            # Process the frame
+            # Process the frame with YOLO
             processed_frame, detected_objects, px_to_mm_ratio = process_frame(
                 frame, px_to_mm_ratio
             )
 
-            # Update detected objects
-            if detected_objects:
-                all_detected_objects.extend(detected_objects)
+            # Prepare detections for SORT (x1, y1, x2, y2, confidence)
+            detections = []
+            for detection in detected_objects:
+                x1, y1, x2, y2 = detection["bbox"]
+                confidence = detection["confidence"]
+                detections.append([x1, y1, x2, y2, confidence])
 
-            # Display the original and processed frames side by side
-            original_frame_placeholder.image(frame, channels="BGR", use_column_width=True)
+            # Update the tracker with the current frame's detections
+            tracked_objects = tracker.update(np.array(detections))
+
+            # Draw tracked objects on the frame
+            for obj in tracked_objects:
+                x1, y1, x2, y2, obj_id = map(int, obj[:5])
+                cv2.rectangle(processed_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.putText(processed_frame, f"ID: {obj_id}", (x1, y1 - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # Display the processed frame
             processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
 
             # Update progress bar
@@ -428,7 +448,7 @@ elif input_method == "Upload Video":
         # Display detection summary after processing
         st.success("Video processing complete!")
         if SHOW_SUMMARY and all_detected_objects:
-            screw_counts = Counter(all_detected_objects)
+            screw_counts = Counter([obj["class_name"] for obj in all_detected_objects])
             summary_text = "### ✨ Detection Summary ✨\n"
             for name, count in screw_counts.items():
                 color = '#%02x%02x%02x' % CATEGORY_COLORS.get(name, (0, 255, 0))
