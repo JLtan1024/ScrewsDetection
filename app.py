@@ -49,7 +49,7 @@ model = YOLO("yolo11-obb12classes.pt")
 
 
 # Initialize OpenCV MultiTracker
-multi_tracker = cv2.MultiTracker_create()
+multi_tracker = cv2.legacy.MultiTracker_create()
 
 
 class VideoCallback:

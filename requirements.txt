@@ -7,3 +7,4 @@ streamlit==1.33.0
 streamlit_webrtc==0.61.3
 torch==2.6.0
 supervision
+opencv-contrib-python
