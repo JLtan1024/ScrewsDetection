@@ -6,7 +6,7 @@ from collections import Counter
 import time
 import tempfile
 from ultralytics import YOLO
-from streamlit_webrtc import RTCConfiguration, webrtc_streamer, VideoProcessorBase, WebRtcMode
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 import av
 import cv2
 import supervision as sv
@@ -326,7 +326,7 @@ if input_method == "Upload Image":
 
     if frame is not None:
         processed_frame, detected_objects, _ = process_frame(frame)
-        frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
+        frame_placeholder.image(processed_frame, channels="RGB")
         
         if SHOW_SUMMARY and detected_objects:
             screw_counts = Counter(detected_objects)
@@ -377,7 +377,7 @@ elif input_method == "Upload Video":
             if detected_objects:
                 all_detected_objects.extend(detected_objects)
             
-            frame_placeholder.image(processed_frame, channels="RGB", use_container_width=True)
+            frame_placeholder.image(processed_frame, channels="RGB")
             
             if SHOW_SUMMARY and all_detected_objects:
                 screw_counts = Counter(all_detected_objects)
