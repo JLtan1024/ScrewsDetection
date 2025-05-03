@@ -249,25 +249,19 @@ def process_frame(frame, px_to_mm_ratio=None):
             elif class_id == COIN_CLASS_ID:
                 label_text += ", Dia: N/A (No Ratio)"
 
-            if SHOW_DETECTIONS:
-                # Get OBB corners
-                xywhr = detection.xywhr[0].cpu().numpy()
-                corners = xywhr_to_corners(xywhr)
+            if SHOW_ORIENTATION:
+                    center = (int(xywhr[0]), int(xywhr[1]))
+                    endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
+                                int(center[1] + 20 * math.sin(xywhr[4])))
+                    draw.line([center, endpoint], fill=(255, 255, 255), width=2)
                 
-                # Draw rotated rectangle
-                for i in range(4):
-                    start_point = tuple(corners[i])
-                    end_point = tuple(corners[(i + 1) % 4])
-                    cv2.line(frame, start_point, end_point, color, BORDER_WIDTH)
-                
-                # Draw label (you can keep your existing label code)
+                # Draw label
                 text_width, text_height = get_text_size(draw, label_text, font)
                 label_background = [(corners[0][0], corners[0][1] - text_height - 5),
-                                   (corners[0][0] + text_width + 5, corners[0][1])]
+                                  (corners[0][0] + text_width + 5, corners[0][1])]
                 draw.rectangle(label_background, fill=color)
                 draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
                           label_text, fill=(255, 255, 255), font=font)
-
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
 class VideoCallback:
