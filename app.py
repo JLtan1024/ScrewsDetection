@@ -12,7 +12,6 @@ import cv2
 import supervision as sv
 import hashlib
 import warnings
-import math
 
 # Suppress torch warnings
 warnings.filterwarnings("ignore", message="Examining the path of torch.classes")
@@ -76,12 +75,11 @@ with st.sidebar:
     
     SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
     SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
-    SHOW_ORIENTATION = st.checkbox("Show Orientation", value=True)
     RESET_COUNTER = st.button("Reset Detection Counter")
 
 # Reset counter if button pressed
 if RESET_COUNTER:
-    st.session_state.tracked_objects = {}
+    st.session_state.tracked_objects = {}  # Changed from set to empty dict
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
@@ -93,8 +91,8 @@ def get_text_size(draw, text, font):
 def xywhr_to_corners(xywhr):
     """Convert xywhr format to four corner points of the rotated rectangle"""
     x, y, w, h, r = xywhr
-    cos_r = math.cos(r)
-    sin_r = math.sin(r)
+    cos_r = np.cos(r)
+    sin_r = np.sin(r)
     
     # Calculate half width and height
     half_w = w / 2
@@ -121,7 +119,7 @@ def xywhr_to_corners(xywhr):
     rotated_corners[:, 1] += y
     
     return rotated_corners.astype(int)
-
+    
 def non_max_suppression(detections, iou_threshold):
     """Improved NMS for OBB that keeps multiple non-overlapping boxes"""
     if len(detections) == 0:
@@ -204,7 +202,7 @@ def process_frame(frame, px_to_mm_ratio=None):
     if current_px_to_mm_ratio is None:
         for detection in filtered_detections:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
-                coin_xywhr = detection.xywhr[0].cpu().numpy()
+                coin_xywhr = detection.xywhr[0]
                 width_px = coin_xywhr[2]
                 height_px = coin_xywhr[3]
                 avg_px_diameter = (width_px + height_px) / 2
@@ -217,7 +215,6 @@ def process_frame(frame, px_to_mm_ratio=None):
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
             confidence = detection.conf[0]
-            xywhr = detection.xywhr[0].cpu().numpy()
             x1, y1, x2, y2 = map(int, detection.xyxy[0])
             class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
             color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
@@ -230,19 +227,21 @@ def process_frame(frame, px_to_mm_ratio=None):
                 detected_objects.append({
                     "class_name": class_name,
                     "bbox": (x1, y1, x2, y2),
-                    "confidence": float(confidence),
-                    "orientation": float(xywhr[4])
+                    "confidence": float(confidence)
                 })
                 # Store the class name with the object ID
                 st.session_state.tracked_objects[obj_id] = class_name
 
             label_text = f"{class_name}"
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
-                diameter_px = (xywhr[2] + xywhr[3]) / 2
+                diameter_px = (x2 - x1 + y2 - y1) / 2
                 diameter_mm = diameter_px * current_px_to_mm_ratio
                 label_text += f", Dia: {diameter_mm:.2f}mm"
             elif class_id != COIN_CLASS_ID and current_px_to_mm_ratio:
-                length_px = max(xywhr[2], xywhr[3])
+                xywhr = detection.xywhr[0]
+                width_px = xywhr[2]
+                height_px = xywhr[3]
+                length_px = max(width_px, height_px)
                 length_mm = length_px * current_px_to_mm_ratio
                 label_text += f", Length: {length_mm:.2f}mm"
             elif class_id != COIN_CLASS_ID:
@@ -252,25 +251,19 @@ def process_frame(frame, px_to_mm_ratio=None):
 
             if SHOW_DETECTIONS:
                 # Get OBB corners
+                xywhr = detection.xywhr[0].cpu().numpy()
                 corners = xywhr_to_corners(xywhr)
                 
                 # Draw rotated rectangle
                 for i in range(4):
                     start_point = tuple(corners[i])
                     end_point = tuple(corners[(i + 1) % 4])
-                    draw.line([start_point, end_point], fill=color, width=BORDER_WIDTH)
+                    cv2.line(frame, start_point, end_point, color, BORDER_WIDTH)
                 
-                # Draw orientation indicator if enabled
-                if SHOW_ORIENTATION:
-                    center = (int(xywhr[0]), int(xywhr[1]))
-                    endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
-                                int(center[1] + 20 * math.sin(xywhr[4])))
-                    draw.line([center, endpoint], fill=(255, 255, 255), width=2)
-                
-                # Draw label
+                # Draw label (you can keep your existing label code)
                 text_width, text_height = get_text_size(draw, label_text, font)
                 label_background = [(corners[0][0], corners[0][1] - text_height - 5),
-                                  (corners[0][0] + text_width + 5, corners[0][1])]
+                                   (corners[0][0] + text_width + 5, corners[0][1])]
                 draw.rectangle(label_background, fill=color)
                 draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
                           label_text, fill=(255, 255, 255), font=font)
@@ -397,4 +390,86 @@ if input_method == "Upload Image":
             show_summary()
 
 elif input_method == "Upload Video":
-    reset_detection_summary()  #
+    reset_detection_summary()  # Clear summary
+    with main_content:
+        st.subheader("Video Input")
+        video_input_method = st.radio("Choose Input Method:", ("Upload", "Capture"))
+
+        if video_input_method == "Upload":
+            uploaded_video = st.file_uploader("Upload a Video", type=["mp4", "avi", "mov"])
+            if uploaded_video is not None:
+                tfile = tempfile.NamedTemporaryFile(delete=False)
+                tfile.write(uploaded_video.read())
+                video_path = tfile.name
+            else:
+                video_path = None
+        elif video_input_method == "Capture":
+            captured_video = st.camera_input("Record a Video")
+            if captured_video is not None:
+                tfile = tempfile.NamedTemporaryFile(delete=False)
+                tfile.write(captured_video.getvalue())
+                video_path = tfile.name
+            else:
+                video_path = None
+
+        if video_path is not None:
+            cap = cv2.VideoCapture(video_path)
+            px_to_mm_ratio = None
+
+            # Get video properties
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+            # Placeholders
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("### 🎥 Input Video")
+                original_frame_placeholder = st.empty()
+            with col2:
+                st.markdown("### 🛠️ Processed Video")
+                processed_frame_placeholder = st.empty()
+
+            progress_bar = st.progress(0)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            current_frame = 0
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                # Process frame
+                processed_frame, _, px_to_mm_ratio = process_frame(frame, px_to_mm_ratio)
+
+                # Display frames
+                original_frame_placeholder.image(frame, channels="RGB", use_column_width=True)
+                processed_frame_placeholder.image(processed_frame, channels="RGB", use_column_width=True)
+
+                # Update progress
+                current_frame += 1
+                progress_bar.progress(min(current_frame / frame_count, 1.0))
+                time.sleep(1 / fps)
+
+            cap.release()
+            show_summary()
+
+elif input_method == "Webcam (Live Camera)":
+    reset_detection_summary()  # Clear summary
+    with main_content:
+        st.subheader("Live Camera Detection")
+        webrtc_ctx = webrtc_streamer(
+            key="screw-detection",
+            mode=WebRtcMode.SENDRECV,
+            video_frame_callback=video_frame_callback,
+            media_stream_constraints={
+                "video": {
+                    "width": {"ideal": WEBCAM_WIDTH},
+                    "height": {"ideal": WEBCAM_HEIGHT},
+                    "frameRate": {"ideal": 30}
+                },
+                "audio": False
+            },
+            async_processing=True
+        )
+        show_summary()
