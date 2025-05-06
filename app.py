@@ -594,7 +594,7 @@ elif input_method == "Webcam (Live Camera)":
                     "width": {"ideal": WEBCAM_WIDTH},
                     "height": {"ideal": WEBCAM_HEIGHT},
                     "frameRate": {"ideal": 30},
-                    "facingMode": {"ideal": get_camera_constraints()}
+                    "facingMode": {"ideal": "environment"}
                 },
                 "audio": False
             },
