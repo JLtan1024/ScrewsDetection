@@ -88,38 +88,6 @@ def get_text_size(draw, text, font):
     else:
         return draw.textsize(text, font=font)
 
-def xywhr_to_corners(xywhr):
-    """Convert xywhr format to four corner points of the rotated rectangle"""
-    x, y, w, h, r = xywhr
-    cos_r = np.cos(r)
-    sin_r = np.sin(r)
-    
-    # Calculate half width and height
-    half_w = w / 2
-    half_h = h / 2
-    
-    # Calculate the four corners relative to center
-    corners = np.array([
-        [-half_w, -half_h],
-        [half_w, -half_h],
-        [half_w, half_h],
-        [-half_w, half_h]
-    ])
-    
-    # Rotate the corners
-    rotation_matrix = np.array([
-        [cos_r, -sin_r],
-        [sin_r, cos_r]
-    ])
-    
-    rotated_corners = np.dot(corners, rotation_matrix.T)
-    
-    # Translate corners to absolute position
-    rotated_corners[:, 0] += x
-    rotated_corners[:, 1] += y
-    
-    return rotated_corners.astype(int)
-    
 def non_max_suppression(detections, iou_threshold):
     """Improved NMS for OBB that keeps multiple non-overlapping boxes"""
     if len(detections) == 0:
@@ -250,23 +218,10 @@ def process_frame(frame, px_to_mm_ratio=None):
                 label_text += ", Dia: N/A (No Ratio)"
 
             if SHOW_DETECTIONS:
-                # Get OBB corners
-                xywhr = detection.xywhr[0].cpu().numpy()
-                corners = xywhr_to_corners(xywhr)
-                
-                # Draw rotated rectangle
-                for i in range(4):
-                    start_point = tuple(corners[i])
-                    end_point = tuple(corners[(i + 1) % 4])
-                    cv2.line(frame, start_point, end_point, color, BORDER_WIDTH)
-                
-                # Draw label (you can keep your existing label code)
+                draw.rectangle([(x1, y1), (x2, y2)], outline=color, width=BORDER_WIDTH)
                 text_width, text_height = get_text_size(draw, label_text, font)
-                label_background = [(corners[0][0], corners[0][1] - text_height - 5),
-                                   (corners[0][0] + text_width + 5, corners[0][1])]
-                draw.rectangle(label_background, fill=color)
-                draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
-                          label_text, fill=(255, 255, 255), font=font)
+                draw.rectangle([(x1, y1 - text_height - 5), (x1 + text_width + 5, y1)], fill=color)
+                draw.text((x1 + 2, y1 - text_height - 3), label_text, fill=(255, 255, 255), font=font)
 
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
