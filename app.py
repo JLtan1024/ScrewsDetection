@@ -57,35 +57,10 @@ model = YOLO("yolo11-obb12classes.pt")
 # Initialize session state for tracking
 if 'tracked_objects' not in st.session_state:
     st.session_state.tracked_objects = {}  # Changed from set to dict to store class info
-if 'binary_threshold' not in st.session_state:
-    st.session_state.binary_threshold = 80
-if 'blur_kernel' not in st.session_state:
-    st.session_state.blur_kernel = 15
-if 'erode_iterations' not in st.session_state:
-    st.session_state.erode_iterations = 5
-if 'dilate_iterations' not in st.session_state:
-    st.session_state.dilate_iterations = 5
 
 # Sidebar controls
 with st.sidebar:
     st.header("Settings")
-    
-    # Image Processing Controls
-    st.subheader("Image Processing")
-    binary_threshold = st.slider("Binary Threshold", 0, 255, 80)
-    st.session_state.binary_threshold = binary_threshold
-    
-    blur_kernel = st.slider("Blur Kernel Size", 1, 15, 15, step=2)
-    st.session_state.blur_kernel = blur_kernel
-    
-    erode_iterations = st.slider("Erode Iterations", 0, 5, 5)
-    st.session_state.erode_iterations = erode_iterations
-    
-    dilate_iterations = st.slider("Dilate Iterations", 0, 5, 5)
-    st.session_state.dilate_iterations = dilate_iterations
-    
-    # Detection Controls
-    st.subheader("Detection Settings")
     input_method = st.radio(
         "Input Source",
         ("Webcam (Live Camera)", "Upload Image", "Upload Video"),
@@ -148,22 +123,19 @@ def xywhr_to_corners(xywhr):
     return rotated_corners.astype(int)
 
 def non_max_suppression(detections, iou_threshold):
-    """Improved NMS for OBB that keeps only the highest confidence detection for each physical object"""
+    """Improved NMS for OBB that keeps multiple non-overlapping boxes"""
     if len(detections) == 0:
         return []
 
-    # Convert detections to numpy arrays for easier processing
     boxes = []
     scores = []
     classes = []
-    xywhr = []
 
     for det in detections:
         if len(det.xyxy) > 0:
             boxes.append(det.xyxy[0].cpu().numpy())
             scores.append(det.conf[0].cpu().numpy())
             classes.append(det.cls[0].cpu().numpy())
-            xywhr.append(det.xywhr[0].cpu().numpy())
 
     if not boxes:
         return []
@@ -171,9 +143,6 @@ def non_max_suppression(detections, iou_threshold):
     boxes = np.array(boxes)
     scores = np.array(scores)
     classes = np.array(classes)
-    xywhr = np.array(xywhr)
-
-    # Sort by confidence score
     indices = np.argsort(scores)[::-1]
     keep_indices = []
 
@@ -182,29 +151,24 @@ def non_max_suppression(detections, iou_threshold):
         keep_indices.append(current)
         rest = indices[1:]
 
-        if len(rest) == 0:
-            break
+        ious = []
+        for i in rest:
+            box1 = boxes[current]
+            box2 = boxes[i]
+            xA = max(box1[0], box2[0])
+            yA = max(box1[1], box2[1])
+            xB = min(box1[2], box2[2])
+            yB = min(box1[3], box2[3])
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+            box1Area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+            box2Area = (box2[2] - box2[0]) * (box2[3] - box1[1])
+            unionArea = box1Area + box2Area - interArea
+            iou = interArea / unionArea if unionArea > 0 else 0.0
+            ious.append(iou)
 
-        # Calculate IoU with remaining boxes
-        current_box = boxes[current]
-        rest_boxes = boxes[rest]
-        
-        # Calculate intersection coordinates
-        xA = np.maximum(current_box[0], rest_boxes[:, 0])
-        yA = np.maximum(current_box[1], rest_boxes[:, 1])
-        xB = np.minimum(current_box[2], rest_boxes[:, 2])
-        yB = np.minimum(current_box[3], rest_boxes[:, 3])
-        
-        # Calculate areas
-        interArea = np.maximum(0, xB - xA) * np.maximum(0, yB - yA)
-        currentArea = (current_box[2] - current_box[0]) * (current_box[3] - current_box[1])
-        restAreas = (rest_boxes[:, 2] - rest_boxes[:, 0]) * (rest_boxes[:, 3] - rest_boxes[:, 1])
-        
-        # Calculate IoU
-        ious = interArea / (currentArea + restAreas - interArea + 1e-6)
-        
-        # Keep boxes that have IoU less than threshold (regardless of class)
-        to_keep = (ious <= iou_threshold)
+        ious = np.array(ious)
+        same_class = (classes[rest] == classes[current])
+        to_keep = ~(same_class & (ious > iou_threshold))
         indices = rest[to_keep]
 
     return [detections[i] for i in keep_indices]
@@ -214,85 +178,8 @@ def generate_object_id(bbox, class_name):
     x1, y1, x2, y2 = map(int, bbox)
     return hashlib.md5(f"{x1}{y1}{x2}{y2}{class_name}".encode()).hexdigest()
 
-def xywhr_to_contour(xywhr, image_shape):
-    """Convert xywhr format to contour points for cv2.findContours"""
-    x, y, w, h, r = xywhr
-    
-    # Calculate half width and height
-    half_w = w / 2
-    half_h = h / 2
-    
-    # Create the four corners relative to center
-    corners = np.array([
-        [-half_w, -half_h],  # top-left
-        [half_w, -half_h],   # top-right
-        [half_w, half_h],    # bottom-right
-        [-half_w, half_h]    # bottom-left
-    ])
-    
-    # Create rotation matrix
-    cos_r = math.cos(r)
-    sin_r = math.sin(r)
-    rotation_matrix = np.array([
-        [cos_r, -sin_r],
-        [sin_r, cos_r]
-    ])
-    
-    # Rotate corners
-    rotated_corners = np.dot(corners, rotation_matrix.T)
-    
-    # Translate to image coordinates
-    rotated_corners[:, 0] += x
-    rotated_corners[:, 1] += y
-    
-    # Ensure corners are within image bounds
-    rotated_corners = np.clip(rotated_corners, 0, np.array([image_shape[1], image_shape[0]]))
-    
-    # Convert to integer coordinates
-    corners_int = rotated_corners.astype(np.int32)
-    
-    # Create a binary mask
-    mask = np.zeros(image_shape[:2], dtype=np.uint8)
-    
-    # Draw the rotated rectangle on the mask
-    cv2.fillPoly(mask, [corners_int], 255)
-    
-    # Find contours
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
-    if contours:
-        # Get the largest contour
-        contour = max(contours, key=cv2.contourArea)
-        return contour
-    return None
-
-def apply_edge_detection(image, method="Canny", **kwargs):
-    """Apply different edge detection methods"""
-    if method == "Canny":
-        return cv2.Canny(image, kwargs.get('low', 50), kwargs.get('high', 150))
-    elif method == "Sobel":
-        dx = cv2.Sobel(image, cv2.CV_64F, 1, 0, ksize=kwargs.get('ksize', 3))
-        dy = cv2.Sobel(image, cv2.CV_64F, 0, 1, ksize=kwargs.get('ksize', 3))
-        return cv2.magnitude(dx, dy)
-    elif method == "Laplacian":
-        return cv2.Laplacian(image, cv2.CV_64F, ksize=kwargs.get('ksize', 3))
-    elif method == "Scharr":
-        dx = cv2.Scharr(image, cv2.CV_64F, 1, 0)
-        dy = cv2.Scharr(image, cv2.CV_64F, 0, 1)
-        return cv2.magnitude(dx, dy)
-    elif method == "Prewitt":
-        kernelx = np.array([[1,1,1],[0,0,0],[-1,-1,-1]])
-        kernely = np.array([[-1,0,1],[-1,0,1],[-1,0,1]])
-        dx = cv2.filter2D(image, cv2.CV_64F, kernelx)
-        dy = cv2.filter2D(image, cv2.CV_64F, kernely)
-        return cv2.magnitude(dx, dy)
-    return image
-
 def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
-    # Make a copy of the original frame for contour detection
-    original_frame = frame.copy()
-    
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
     if not results:
         return frame, [], px_to_mm_ratio
@@ -300,23 +187,32 @@ def process_frame(frame, px_to_mm_ratio=None):
     result = results[0]
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
     
-    # Convert frame to RGB for drawing
-    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    original_frame_rgb = cv2.cvtColor(original_frame, cv2.COLOR_BGR2RGB)
+    pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_image)
     
+    try:
+        font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
+    except:
+        font = ImageFont.load_default()
+        if hasattr(font, 'size'):
+            font.size = LABEL_FONT_SIZE
+
     detected_objects = []
     current_px_to_mm_ratio = px_to_mm_ratio
     
-    # Find reference coin for scaling if one exists
-    for detection in filtered_detections:
-        if len(detection.cls) > 0 and detection.cls[0] == COIN_CLASS_ID:
-            if len(detection.xywhr) > 0:
-                xywhr = detection.xywhr[0].cpu().numpy()
-                coin_diameter_px = (xywhr[2] + xywhr[3]) / 2  # Average of width and height
-                current_px_to_mm_ratio = COIN_DIAMETER_MM / coin_diameter_px
+    # Find coin for scaling
+    if current_px_to_mm_ratio is None:
+        for detection in filtered_detections:
+            if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
+                coin_xywhr = detection.xywhr[0].cpu().numpy()
+                width_px = coin_xywhr[2]
+                height_px = coin_xywhr[3]
+                avg_px_diameter = (width_px + height_px) / 2
+                if avg_px_diameter > 0:
+                    current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
                 break
-    
-    # Process each detection - first find contours on the original frame
+
+    # Draw detections and track objects
     for detection in filtered_detections:
         if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
             class_id = int(detection.cls[0])
@@ -325,42 +221,7 @@ def process_frame(frame, px_to_mm_ratio=None):
             x1, y1, x2, y2 = map(int, detection.xyxy[0])
             class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
             color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
-            
-            # Get OBB corners
-            corners = xywhr_to_corners(xywhr)
-            
-            # Create a mask for the rotated bounding box
-            mask = np.zeros(original_frame.shape[:2], dtype=np.uint8)
-            cv2.fillPoly(mask, [corners.astype(np.int32)], 255)
-            
-            # Extract the region inside the mask from the original frame
-            roi = cv2.bitwise_and(original_frame, original_frame, mask=mask)
-            
-            # Convert ROI to grayscale for contour detection
-            roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-            
-            # Apply preprocessing for better contour detection
-            blurred = cv2.GaussianBlur(roi_gray, (st.session_state.blur_kernel, st.session_state.blur_kernel), 0)
-            _, thresh = cv2.threshold(blurred, st.session_state.binary_threshold, 255, cv2.THRESH_BINARY)
-            
-            # Apply morphological operations
-            kernel = np.ones((3, 3), np.uint8)
-            if st.session_state.erode_iterations > 0:
-                thresh = cv2.erode(thresh, kernel, iterations=st.session_state.erode_iterations)
-            if st.session_state.dilate_iterations > 0:
-                thresh = cv2.dilate(thresh, kernel, iterations=st.session_state.dilate_iterations)
-            
-            # Find contours in the thresholded image
-            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-            
-            if contours:
-                # Filter small contours
-                significant_contours = [c for c in contours if cv2.contourArea(c) > 50]
-                
-                if significant_contours:
-                    # Draw the contours on the RGB frame
-                    cv2.drawContours(frame_rgb, significant_contours, -1, color, 2)
-            
+
             # Generate unique ID for the object
             obj_id = generate_object_id((x1, y1, x2, y2), class_name)
             
@@ -372,32 +233,9 @@ def process_frame(frame, px_to_mm_ratio=None):
                     "confidence": float(confidence),
                     "orientation": float(xywhr[4])
                 })
+                # Store the class name with the object ID
                 st.session_state.tracked_objects[obj_id] = class_name
-    
-    # Now draw OBBs, orientation indicators, and labels on top of the contours
-    for detection in filtered_detections:
-        if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
-            class_id = int(detection.cls[0])
-            confidence = detection.conf[0]
-            xywhr = detection.xywhr[0].cpu().numpy()
-            x1, y1, x2, y2 = map(int, detection.xyxy[0])
-            class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
-            color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
-            
-            # Get OBB corners
-            corners = xywhr_to_corners(xywhr)
-            
-            # Draw OBB with class-specific color
-            cv2.polylines(frame_rgb, [corners.astype(np.int32)], True, color, 2)
-            
-            # Draw orientation indicator if enabled
-            if SHOW_ORIENTATION:
-                center = (int(xywhr[0]), int(xywhr[1]))
-                endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
-                          int(center[1] + 20 * math.sin(xywhr[4])))
-                cv2.line(frame_rgb, center, endpoint, (255, 255, 255), 2)
-            
-            # Prepare label text
+
             label_text = f"{class_name}"
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
                 diameter_px = (xywhr[2] + xywhr[3]) / 2
@@ -412,23 +250,33 @@ def process_frame(frame, px_to_mm_ratio=None):
             elif class_id == COIN_CLASS_ID:
                 label_text += ", Dia: N/A (No Ratio)"
 
-            # Draw label background and text
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale = 0.5
-            thickness = 2
-            (text_width, text_height), _ = cv2.getTextSize(label_text, font, font_scale, thickness)
-            
-            cv2.rectangle(frame_rgb, 
-                        (x1, y1 - text_height - 10),
-                        (x1 + text_width + 10, y1),
-                        color, -1)
-            
-            cv2.putText(frame_rgb, label_text,
-                      (x1 + 5, y1 - 5),
-                      font, font_scale,
-                      (255, 255, 255), thickness)
+            if SHOW_DETECTIONS:
+                # Get OBB corners
+                corners = xywhr_to_corners(xywhr)
+                
+                # Draw rotated rectangle
+                for i in range(4):
+                    start_point = tuple(corners[i])
+                    end_point = tuple(corners[(i + 1) % 4])
+                    draw.line([start_point, end_point], fill=color, width=BORDER_WIDTH)
+                
+                # Draw orientation indicator if enabled
+                if SHOW_ORIENTATION:
+                    center = (int(xywhr[0]), int(xywhr[1]))
+                    endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
+                                int(center[1] + 20 * math.sin(xywhr[4])))
+                    draw.line([center, endpoint], fill=(255, 255, 255), width=2)
+                
+                # Draw label
+                text_width, text_height = get_text_size(draw, label_text, font)
+                label_background = [(corners[0][0], corners[0][1] - text_height - 5),
+                                  (corners[0][0] + text_width + 5, corners[0][1])]
+                draw.rectangle(label_background, fill=color)
+                draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
+                          label_text, fill=(255, 255, 255), font=font)
 
-    return frame_rgb, detected_objects, current_px_to_mm_ratio
+    return np.array(pil_image), detected_objects, current_px_to_mm_ratio
+
 class VideoCallback:
     def __init__(self):
         self.px_to_mm_ratio = None
