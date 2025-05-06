@@ -179,72 +179,44 @@ def generate_object_id(bbox, class_name):
     return hashlib.md5(f"{x1}{y1}{x2}{y2}{class_name}".encode()).hexdigest()
 
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-    # Convert frame to numpy array
-    img = frame.to_ndarray(format="bgr24")
-    
-    # Run YOLO inference
-    results = model(img, conf=CONFIDENCE_THRESHOLD)
-    
-    # Process detections if any
-    if results and len(results[0]) > 0:
-        # Get the first (and only) result
-        result = results[0]
-        st.write(result)
-        # Convert to supervision Detections
-        detections = sv.Detections.from_yolov8(result)
+    try:
+        # Convert frame to numpy array
+        img = frame.to_ndarray(format="bgr24")
         
-        # Draw bounding boxes
-        for i, (xyxy, mask, confidence, class_id, tracker_id) in enumerate(detections):
-            # Get class name and color
-            class_name = CLASS_NAMES.get(int(class_id), f"Class {int(class_id)}")
-            color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+        # Debug: Add timestamp to verify frames are processing
+        cv2.putText(img, f"Frame: {time.time()}", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Run YOLO inference
+        results = model(img, conf=CONFIDENCE_THRESHOLD)
+        st.write(results)
+        if results and len(results[0]) > 0:
+            result = results[0]
             
-            # Convert coordinates to integers
-            x1, y1, x2, y2 = map(int, xyxy)
-            
-            # Draw bounding box
-            cv2.rectangle(img, (x1, y1), (x2, y2), color, BORDER_WIDTH)
-            
-            # Prepare label text
-            label_text = f"{class_name} {confidence:.2f}"
-            
-            # Get text size
-            (text_width, text_height), _ = cv2.getTextSize(
-                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            
-            # Draw label background
-            cv2.rectangle(
-                img, 
-                (x1, y1 - text_height - 10),
-                (x1 + text_width + 5, y1),
-                color,
-                -1  # Filled rectangle
-            )
-            
-            # Draw label text
-            cv2.putText(
-                img,
-                label_text,
-                (x1 + 2, y1 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),  # White text
-                1
-            )
-            
-            # Draw orientation if enabled
-            if SHOW_ORIENTATION and hasattr(result, 'obb') and i < len(result.obb.xywhr):
-                xywhr = result.obb.xywhr[i].cpu().numpy()
-                center = (int(xywhr[0]), int(xywhr[1]))
-                angle = xywhr[4]
-                length = 20
-                endpoint = (
-                    int(center[0] + length * math.cos(angle)),
-                    int(center[1] + length * math.sin(angle))
-                )
-                cv2.line(img, center, endpoint, (255, 255, 255), 2)
-
-    return av.VideoFrame.from_ndarray(img, format="bgr24")
+            # Draw detections
+            for detection in result:
+                # Get detection info
+                xyxy = detection.xyxy[0].cpu().numpy()
+                class_id = int(detection.cls[0])
+                confidence = float(detection.conf[0])
+                class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
+                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+                
+                # Draw bounding box
+                x1, y1, x2, y2 = map(int, xyxy)
+                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                
+                # Draw label
+                label = f"{class_name} {confidence:.2f}"
+                (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                cv2.rectangle(img, (x1, y1-text_height-10), (x1+text_width, y1), color, -1)
+                cv2.putText(img, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+        
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+    
+    except Exception as e:
+        print(f"Processing error: {e}")
+        return frame  # Return original frame if error occurs
 
     
 def process_frame(frame, px_to_mm_ratio=None):
