@@ -295,6 +295,7 @@ class VideoCallback:
         elapsed_time = time.time() - self.start_time
         fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
         
+        status.markdown("🟢 Camera is active - processing frames")
         # Convert back to BGR for display
         processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
         
