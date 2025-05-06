@@ -52,41 +52,6 @@ CATEGORY_COLORS = {
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
-
-
-mobile_js = """
-<script>
-    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    window.parent.postMessage({type: 'streamlit:setComponentValue', value: isMobile}, '*');
-</script>
-"""
-
-# Run JS and store result in session state
-if 'is_mobile' not in st.session_state:
-    html(mobile_js, height=0)
-    st.session_state.is_mobile = False  # Default to laptop
-
-# Listen for JS response (requires a button/rerun to update)
-if st.button("Check Device"):
-    st.rerun()
-
-
-def get_camera_constraints():
-    # If mobile, let user choose. Default to back camera.
-    if st.session_state.get("is_mobile", False):
-        st.write("📱 **Mobile Detected**")
-        camera_choice = st.radio(
-            "Select Camera:",
-            ("Back Camera (Recommended)", "Front Camera"),
-            index=0,
-        )
-        facing_mode = "environment" if "Back" in camera_choice else "user"
-    else:
-        st.write("💻 **Laptop/Desktop Detected**")
-        facing_mode = "user"  # Default webcam
-
-    return facing_mode
-
 # Load YOLO model
 model = YOLO("yolo11-obb12classes.pt")
 
@@ -216,22 +181,39 @@ def generate_object_id(bbox, class_name):
 
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     try:
+        # Initialize FPS counter in session state
+        if 'fps_counter' not in st.session_state:
+            st.session_state.fps_counter = {
+                'last_time': time.time(),
+                'frame_count': 0,
+                'current_fps': 0
+            }
+        
+        # Update FPS counter
+        counter = st.session_state.fps_counter
+        counter['frame_count'] += 1
+        elapsed = time.time() - counter['last_time']
+        
+        # Update FPS every second
+        if elapsed >= 1.0:
+            counter['current_fps'] = counter['frame_count'] / elapsed
+            counter['frame_count'] = 0
+            counter['last_time'] = time.time()
+        
         # Convert frame to numpy array
         img = frame.to_ndarray(format="bgr24")
         
-        # Debug: Add timestamp to verify frames are processing
-        cv2.putText(img, f"Frame: {time.time()}", (10, 30), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        # Show FPS if enabled
+        if SHOW_FPS:
+            fps_text = f"FPS: {counter['current_fps']:.1f}"
+            cv2.putText(img, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
         
         # Run YOLO OBB inference
         results = model(img, conf=CONFIDENCE_THRESHOLD)
         
-        if not results:
-            return frame
-        
         if results and len(results[0].obb) > 0:
             result = results[0]
-            
+            new_objects_detected = False
             # Find coin for scaling
             highest_confidence = 0
             for detection in result.obb:
@@ -255,8 +237,25 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                 xywhr = detection.xywhr[0].cpu().numpy()
                 class_id = int(detection.cls[0])
                 confidence = float(detection.conf[0])
-                class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
+                class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+                
+                # Generate unique ID for the object
+                obj_id = generate_object_id(map(int, detection.xyxy[0]), class_name)
+                
+                # check whether tracked_objects are in session state
+                if 'tracked_objects' not in st.session_state:
+                    print("Initializing tracked_objects in session state")
+                    # st.session_state.tracked_objects = {}
+                    
+    
+                if obj_id not in st.session_state.tracked_objects: 
+                    print(f"New object detected: {class_name} with ID: {obj_id}")
+                    st.session_state.tracked_objects[obj_id] = class_name
+                    print(f"Total tracked objects: {len(st.session_state.tracked_objects)}")
+
+                if not SHOW_DETECTIONS:
+                    continue
                 
                 # Convert xywhr to four corner points
                 corners = xywhr_to_corners(xywhr)
@@ -268,7 +267,7 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     cv2.line(img, start, end, color, 2)
                 
                 # Draw label
-                label = f"{class_name} {confidence:.2f}"
+                label = f"CatID:{class_id} {confidence:.2f}"
                 if class_id == COIN_CLASS_ID and px_to_mm_ratio:
                     diameter_px = (xywhr[2] + xywhr[3]) / 2
                     diameter_mm = diameter_px * px_to_mm_ratio
@@ -283,7 +282,7 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     label += ", Dia: N/A (No Ratio)"
 
                 (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-                
+
                 # Label background
                 label_bg = (corners[0][0], corners[0][1] - text_height - 10,
                            corners[0][0] + text_width + 5, corners[0][1])
@@ -303,19 +302,13 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
                                int(center[1] + 20 * math.sin(xywhr[4])))
                     cv2.line(img, center, endpoint, (255, 255, 255), 2)
-
-        # Show FPS if enabled
-        if SHOW_FPS:
-            fps = frame.rate
-            cv2.putText(img, f"FPS: {fps}", (10, 50), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        
-        
+        print(f"The end of function--Total tracked objects: {len(st.session_state.tracked_objects)}")
         return av.VideoFrame.from_ndarray(img, format="bgr24")
     
     except Exception as e:
         print(f"Processing error: {e}")
         return frame  # Return original frame if error occurs
+
 
     
 def process_frame(frame, px_to_mm_ratio=None):
@@ -384,7 +377,7 @@ def process_frame(frame, px_to_mm_ratio=None):
                 # Store the class name with the object ID
                 st.session_state.tracked_objects[obj_id] = class_name
 
-            label_text = f"{class_name}"
+            label_text = f"CatID:{class_id} {confidence:.2f}"
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
                 diameter_px = (xywhr[2] + xywhr[3]) / 2
                 diameter_mm = diameter_px * current_px_to_mm_ratio
@@ -422,7 +415,7 @@ def process_frame(frame, px_to_mm_ratio=None):
                 draw.rectangle(label_background, fill=color)
                 draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
                           label_text, fill=(255, 255, 255), font=font)
-    print(f"------------------------Detected {len(detected_objects)} objects")
+
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
 
@@ -444,9 +437,20 @@ summary_placeholder = st.container()  # Summary will be displayed here
 
 def show_summary():
     """Display the detection summary with counts for each category"""
+    with summary_placeholder:
+            st.empty()
+
     if SHOW_SUMMARY:
+        print("Showing summary...")
+        # Check if tracked_objects exists in session state
+        print("length of tracked_objects:", len(st.session_state.tracked_objects))
+        if not hasattr(st.session_state, 'tracked_objects'):
+            with summary_placeholder:
+                st.warning("No tracking data available. Please start detection to see the summary.")
+            return
+
         # Get all unique detected objects from session state
-        if hasattr(st.session_state, 'tracked_objects') and st.session_state.tracked_objects:
+        if st.session_state.tracked_objects:
             # Filter out the coin class
             filtered_objects = {
                 obj_id: class_name
@@ -477,7 +481,7 @@ def show_summary():
                 st.markdown(summary_text, unsafe_allow_html=True)
         else:
             with summary_placeholder:
-                st.info("No screws or nuts detected yet.")
+                st.info("No objects detected yet.")
 
 if input_method == "Upload Image":
     reset_detection_summary()  # Clear summary
@@ -570,7 +574,7 @@ elif input_method == "Upload Video":
             show_summary()
 
 elif input_method == "Webcam (Live Camera)":
-    reset_detection_summary()  # Clear summary
+    # reset_detection_summary()  # Clear summary
     with main_content:
         st.subheader("Live Camera Detection")
         webrtc_ctx = webrtc_streamer(
@@ -588,4 +592,10 @@ elif input_method == "Webcam (Live Camera)":
             },
             async_processing=True
         )
-        show_summary()
+
+        print(f" After frame ---Total tracked objects: {len(st.session_state.tracked_objects)}")
+        # Periodically update the summary
+        while webrtc_ctx.state.playing:
+            print(f"In printing -- Total tracked objects: {len(st.session_state.tracked_objects)}")
+            show_summary()  # Call the summary function to update the UI
+            time.sleep(1)  # Update every second
