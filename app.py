@@ -178,15 +178,88 @@ def generate_object_id(bbox, class_name):
     x1, y1, x2, y2 = map(int, bbox)
     return hashlib.md5(f"{x1}{y1}{x2}{y2}{class_name}".encode()).hexdigest()
 
+def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+    # Convert frame to numpy array
+    img = frame.to_ndarray(format="bgr24")
+    
+    # Run YOLO inference
+    results = model(img, conf=CONFIDENCE_THRESHOLD)
+    
+    # Process detections if any
+    if results and len(results[0]) > 0:
+        # Get the first (and only) result
+        result = results[0]
+        
+        # Convert to supervision Detections
+        detections = sv.Detections.from_yolov8(result)
+        
+        # Draw bounding boxes
+        for i, (xyxy, mask, confidence, class_id, tracker_id) in enumerate(detections):
+            # Get class name and color
+            class_name = CLASS_NAMES.get(int(class_id), f"Class {int(class_id)}")
+            color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+            
+            # Convert coordinates to integers
+            x1, y1, x2, y2 = map(int, xyxy)
+            
+            # Draw bounding box
+            cv2.rectangle(img, (x1, y1), (x2, y2), color, BORDER_WIDTH)
+            
+            # Prepare label text
+            label_text = f"{class_name} {confidence:.2f}"
+            
+            # Get text size
+            (text_width, text_height), _ = cv2.getTextSize(
+                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            
+            # Draw label background
+            cv2.rectangle(
+                img, 
+                (x1, y1 - text_height - 10),
+                (x1 + text_width + 5, y1),
+                color,
+                -1  # Filled rectangle
+            )
+            
+            # Draw label text
+            cv2.putText(
+                img,
+                label_text,
+                (x1 + 2, y1 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),  # White text
+                1
+            )
+            
+            # Draw orientation if enabled
+            if SHOW_ORIENTATION and hasattr(result, 'obb') and i < len(result.obb.xywhr):
+                xywhr = result.obb.xywhr[i].cpu().numpy()
+                center = (int(xywhr[0]), int(xywhr[1]))
+                angle = xywhr[4]
+                length = 20
+                endpoint = (
+                    int(center[0] + length * math.cos(angle)),
+                    int(center[1] + length * math.sin(angle))
+                )
+                cv2.line(img, center, endpoint, (255, 255, 255), 2)
+
+    return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    
 def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
+    print("Processing frame...")
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
+    st.write(results)
+    print(f"Model inference completed")
     if not results:
+        print("No results found")
         return frame, [], px_to_mm_ratio
-    
+    print(f"Found {len(results)} results")
     result = results[0]
     filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
-    
+    print(f"Filtered {len(filtered_detections)} detections after NMS")
     pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_image)
     
@@ -228,6 +301,7 @@ def process_frame(frame, px_to_mm_ratio=None):
             # Only count if not tracked before
             if obj_id not in st.session_state.tracked_objects:
                 detected_objects.append({
+                    "class_id": class_id,
                     "class_name": class_name,
                     "bbox": (x1, y1, x2, y2),
                     "confidence": float(confidence),
@@ -274,7 +348,7 @@ def process_frame(frame, px_to_mm_ratio=None):
                 draw.rectangle(label_background, fill=color)
                 draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
                           label_text, fill=(255, 255, 255), font=font)
-
+    print(f"------------------------Detected {len(detected_objects)} objects")
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
 class VideoCallback:
@@ -284,21 +358,35 @@ class VideoCallback:
         self.start_time = time.time()
     
     def process_frame(self, frame):
-        # Convert from BGR to RGB
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        print("Processing frame... in video call")
+        st.markdown("🟢 Camera is active - processing frames")
+        # # Convert from BGR to RGB
+        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
         # Process the frame
         processed_frame, detected_objects, self.px_to_mm_ratio = process_frame(frame, self.px_to_mm_ratio)
         
+        print(f"Detected {len(detected_objects)} objects")
         # Calculate FPS
         self.frame_count += 1
         elapsed_time = time.time() - self.start_time
         fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
         
-        status.markdown("🟢 Camera is active - processing frames")
-        # Convert back to BGR for display
-        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
+        # # Convert back to BGR for display
+        # processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
         
+        # Draw bounding boxes and labels on the frame
+        for obj in detected_objects:
+            x1, y1, x2, y2 = obj['bbox']
+            class_name = obj['class_name']
+            confidence = obj['confidence']
+            label_text = f"{class_name} ({confidence:.2f})"
+            
+            # Draw rectangle and label
+            cv2.rectangle(processed_frame, (x1, y1), (x2, y2), CATEGORY_COLORS[class_name], 2)
+            cv2.putText(processed_frame, label_text, (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+            
         # Add FPS text if enabled
         if 'SHOW_FPS' in globals() and SHOW_FPS:
             cv2.putText(processed_frame, f"FPS: {fps:.1f}", (10, 30), 
@@ -306,17 +394,17 @@ class VideoCallback:
         
         return processed_frame
 
-def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-    img = frame.to_ndarray(format="bgr24")
+# def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+#     print("Frame received!")
+#     img = frame.to_ndarray(format="bgr24")
     
-    # Get or create the video callback instance
-    if 'video_callback' not in st.session_state:
-        st.session_state.video_callback = VideoCallback()
+#     # Get or create the video callback instance
+#     if 'video_callback' not in st.session_state:
+#         st.session_state.video_callback = VideoCallback()
     
-    # Process the frame
-    processed_img = st.session_state.video_callback.process_frame(img)
-    
-    return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
+#     # Process the frame
+#     processed_img = st.session_state.video_callback.process_frame(img)
+#     return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
 
 # Function to reset detection summary
 def reset_detection_summary():
