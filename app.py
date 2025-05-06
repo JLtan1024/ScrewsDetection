@@ -213,7 +213,6 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         
         if results and len(results[0].obb) > 0:
             result = results[0]
-            new_objects_detected = False
             # Find coin for scaling
             highest_confidence = 0
             for detection in result.obb:
@@ -246,7 +245,7 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                 # check whether tracked_objects are in session state
                 if 'tracked_objects' not in st.session_state:
                     print("Initializing tracked_objects in session state")
-                    # st.session_state.tracked_objects = {}
+                    st.session_state.tracked_objects = {}
                     
     
                 if obj_id not in st.session_state.tracked_objects: 
