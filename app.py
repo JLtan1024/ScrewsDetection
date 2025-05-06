@@ -187,30 +187,53 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         cv2.putText(img, f"Frame: {time.time()}", (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
-        # Run YOLO inference
+        # Run YOLO OBB inference
         results = model(img, conf=CONFIDENCE_THRESHOLD)
-        st.write(results)
-        if results and len(results[0]) > 0:
+        
+        if results and len(results[0].obb) > 0:
             result = results[0]
             
-            # Draw detections
-            for detection in result:
-                # Get detection info
-                xyxy = detection.xyxy[0].cpu().numpy()
+            # Draw OBB detections
+            for detection in result.obb:
+                # Get OBB detection info
+                xywhr = detection.xywhr[0].cpu().numpy()
                 class_id = int(detection.cls[0])
                 confidence = float(detection.conf[0])
                 class_name = CLASS_NAMES.get(class_id, f"Class {class_id}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
                 
-                # Draw bounding box
-                x1, y1, x2, y2 = map(int, xyxy)
-                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                # Convert xywhr to four corner points
+                corners = xywhr_to_corners(xywhr)
+                
+                # Draw rotated rectangle
+                for i in range(4):
+                    start = tuple(corners[i].astype(int))
+                    end = tuple(corners[(i + 1) % 4].astype(int))
+                    cv2.line(img, start, end, color, 2)
                 
                 # Draw label
                 label = f"{class_name} {confidence:.2f}"
                 (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-                cv2.rectangle(img, (x1, y1-text_height-10), (x1+text_width, y1), color, -1)
-                cv2.putText(img, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
+                
+                # Label background
+                label_bg = (corners[0][0], corners[0][1] - text_height - 10,
+                           corners[0][0] + text_width + 5, corners[0][1])
+                cv2.rectangle(img, 
+                            (int(label_bg[0]), int(label_bg[1])),
+                            (int(label_bg[2]), int(label_bg[3])),
+                            color, -1)
+                
+                # Label text
+                cv2.putText(img, label, 
+                          (int(corners[0][0] + 2), int(corners[0][1] - 5)),
+                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                
+                # Draw orientation if enabled
+                if SHOW_ORIENTATION:
+                    center = (int(xywhr[0]), int(xywhr[1]))
+                    endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
+                               int(center[1] + 20 * math.sin(xywhr[4])))
+                    cv2.line(img, center, endpoint, (255, 255, 255), 2)
         
         return av.VideoFrame.from_ndarray(img, format="bgr24")
     
