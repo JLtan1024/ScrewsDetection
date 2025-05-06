@@ -189,7 +189,7 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     if results and len(results[0]) > 0:
         # Get the first (and only) result
         result = results[0]
-        
+        st.write(result)
         # Convert to supervision Detections
         detections = sv.Detections.from_yolov8(result)
         
