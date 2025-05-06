@@ -13,6 +13,7 @@ import supervision as sv
 import hashlib
 import warnings
 import math
+from streamlit.components.v1 import html
 
 # Suppress torch warnings
 warnings.filterwarnings("ignore", message="Examining the path of torch.classes")
@@ -50,6 +51,41 @@ CATEGORY_COLORS = {
 }
 LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
+
+
+
+mobile_js = """
+<script>
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    window.parent.postMessage({type: 'streamlit:setComponentValue', value: isMobile}, '*');
+</script>
+"""
+
+# Run JS and store result in session state
+if 'is_mobile' not in st.session_state:
+    html(mobile_js, height=0)
+    st.session_state.is_mobile = False  # Default to laptop
+
+# Listen for JS response (requires a button/rerun to update)
+if st.button("Check Device"):
+    st.rerun()
+
+
+def get_camera_constraints():
+    # If mobile, let user choose. Default to back camera.
+    if st.session_state.get("is_mobile", False):
+        st.write("📱 **Mobile Detected**")
+        camera_choice = st.radio(
+            "Select Camera:",
+            ("Back Camera (Recommended)", "Front Camera"),
+            index=0,
+        )
+        facing_mode = "environment" if "Back" in camera_choice else "user"
+    else:
+        st.write("💻 **Laptop/Desktop Detected**")
+        facing_mode = "user"  # Default webcam
+
+    return facing_mode
 
 # Load YOLO model
 model = YOLO("yolo11-obb12classes.pt")
@@ -557,7 +593,8 @@ elif input_method == "Webcam (Live Camera)":
                 "video": {
                     "width": {"ideal": WEBCAM_WIDTH},
                     "height": {"ideal": WEBCAM_HEIGHT},
-                    "frameRate": {"ideal": 30}
+                    "frameRate": {"ideal": 30},
+                    "facingMode": {"ideal": get_camera_constraints()}
                 },
                 "audio": False
             },
