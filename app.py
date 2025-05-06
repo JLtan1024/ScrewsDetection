@@ -226,9 +226,29 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         # Run YOLO OBB inference
         results = model(img, conf=CONFIDENCE_THRESHOLD)
         
+        if not results:
+            return frame
+        
         if results and len(results[0].obb) > 0:
             result = results[0]
             
+            # Find coin for scaling
+            highest_confidence = 0
+            for detection in result.obb:
+                if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
+                    confidence = detection.conf[0]
+                    if confidence > highest_confidence:
+                        highest_confidence = confidence
+                        coin_xywhr = detection.xywhr[0].cpu().numpy()
+                        width_px = coin_xywhr[2]
+                        height_px = coin_xywhr[3]
+                        avg_px_diameter = (width_px + height_px) / 2
+                        if avg_px_diameter > 0:
+                            st.session_state.px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+
+            # Use existing scaling ratio if no new coin is detected
+            px_to_mm_ratio = st.session_state.get("px_to_mm_ratio", None)
+
             # Draw OBB detections
             for detection in result.obb:
                 # Get OBB detection info
@@ -249,6 +269,19 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                 
                 # Draw label
                 label = f"{class_name} {confidence:.2f}"
+                if class_id == COIN_CLASS_ID and px_to_mm_ratio:
+                    diameter_px = (xywhr[2] + xywhr[3]) / 2
+                    diameter_mm = diameter_px * px_to_mm_ratio
+                    label += f", Dia: {diameter_mm:.2f}mm"
+                elif class_id != COIN_CLASS_ID and px_to_mm_ratio:
+                    length_px = max(xywhr[2], xywhr[3])
+                    length_mm = length_px * px_to_mm_ratio
+                    label += f", Length: {length_mm:.2f}mm"
+                elif class_id != COIN_CLASS_ID:
+                    label += ", Length: N/A (No Coin)"
+                elif class_id == COIN_CLASS_ID:
+                    label += ", Dia: N/A (No Ratio)"
+
                 (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
                 
                 # Label background
@@ -270,6 +303,13 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
                                int(center[1] + 20 * math.sin(xywhr[4])))
                     cv2.line(img, center, endpoint, (255, 255, 255), 2)
+
+        # Show FPS if enabled
+        if SHOW_FPS:
+            fps = frame.rate
+            cv2.putText(img, f"FPS: {fps}", (10, 50), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
         
         return av.VideoFrame.from_ndarray(img, format="bgr24")
     
@@ -282,7 +322,6 @@ def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
     print("Processing frame...")
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    st.write(results)
     print(f"Model inference completed")
     if not results:
         print("No results found")
@@ -305,16 +344,20 @@ def process_frame(frame, px_to_mm_ratio=None):
     current_px_to_mm_ratio = px_to_mm_ratio
     
     # Find coin for scaling
+    # if two coin detected, use the higher confidence one
     if current_px_to_mm_ratio is None:
+        highest_confidence = 0
         for detection in filtered_detections:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
-                coin_xywhr = detection.xywhr[0].cpu().numpy()
-                width_px = coin_xywhr[2]
-                height_px = coin_xywhr[3]
-                avg_px_diameter = (width_px + height_px) / 2
-                if avg_px_diameter > 0:
-                    current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                break
+                confidence = detection.conf[0]
+                if confidence > highest_confidence:
+                    highest_confidence = confidence
+                    coin_xywhr = detection.xywhr[0].cpu().numpy()
+                    width_px = coin_xywhr[2]
+                    height_px = coin_xywhr[3]
+                    avg_px_diameter = (width_px + height_px) / 2
+                    if avg_px_diameter > 0:
+                        current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
 
     # Draw detections and track objects
     for detection in filtered_detections:
@@ -382,62 +425,7 @@ def process_frame(frame, px_to_mm_ratio=None):
     print(f"------------------------Detected {len(detected_objects)} objects")
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
-class VideoCallback:
-    def __init__(self):
-        self.px_to_mm_ratio = None
-        self.frame_count = 0
-        self.start_time = time.time()
-    
-    def process_frame(self, frame):
-        print("Processing frame... in video call")
-        st.markdown("🟢 Camera is active - processing frames")
-        # # Convert from BGR to RGB
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        
-        # Process the frame
-        processed_frame, detected_objects, self.px_to_mm_ratio = process_frame(frame, self.px_to_mm_ratio)
-        
-        print(f"Detected {len(detected_objects)} objects")
-        # Calculate FPS
-        self.frame_count += 1
-        elapsed_time = time.time() - self.start_time
-        fps = self.frame_count / elapsed_time if elapsed_time > 0 else 0
-        
-        # # Convert back to BGR for display
-        # processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_RGB2BGR)
-        
-        # Draw bounding boxes and labels on the frame
-        for obj in detected_objects:
-            x1, y1, x2, y2 = obj['bbox']
-            class_name = obj['class_name']
-            confidence = obj['confidence']
-            label_text = f"{class_name} ({confidence:.2f})"
-            
-            # Draw rectangle and label
-            cv2.rectangle(processed_frame, (x1, y1), (x2, y2), CATEGORY_COLORS[class_name], 2)
-            cv2.putText(processed_frame, label_text, (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-            
-        # Add FPS text if enabled
-        if 'SHOW_FPS' in globals() and SHOW_FPS:
-            cv2.putText(processed_frame, f"FPS: {fps:.1f}", (10, 30), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        
-        return processed_frame
 
-# def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-#     print("Frame received!")
-#     img = frame.to_ndarray(format="bgr24")
-    
-#     # Get or create the video callback instance
-#     if 'video_callback' not in st.session_state:
-#         st.session_state.video_callback = VideoCallback()
-    
-#     # Process the frame
-#     processed_img = st.session_state.video_callback.process_frame(img)
-#     return av.VideoFrame.from_ndarray(processed_img, format="bgr24")
-
-# Function to reset detection summary
 def reset_detection_summary():
     st.session_state.tracked_objects = {}
     with summary_placeholder:
