@@ -14,6 +14,7 @@ import hashlib
 import warnings
 import math
 from streamlit.components.v1 import html
+from threading import Lock
 
 # Suppress torch warnings
 warnings.filterwarnings("ignore", message="Examining the path of torch.classes")
@@ -55,9 +56,21 @@ BORDER_WIDTH = 3
 # Load YOLO model
 model = YOLO("yolo11-obb12classes.pt")
 
-# Initialize session state for tracking
-if 'tracked_objects' not in st.session_state:
-    st.session_state.tracked_objects = {}  # Changed from set to dict to store class info
+
+
+# Shared data and lock for thread safety
+shared_data = {
+    "tracked_objects": {},
+    "previous_tracked_objects": {},
+    "fps_counter": {
+        "last_time": time.time(),
+        "frame_count": 0,
+        "current_fps": 0
+    },
+    "px_to_mm_ratio": None  # Initialize px_to_mm_ratio
+}
+
+data_lock = Lock()
 
 # Sidebar controls
 with st.sidebar:
@@ -82,7 +95,10 @@ with st.sidebar:
 
 # Reset counter if button pressed
 if RESET_COUNTER:
-    st.session_state.tracked_objects = {}
+    with data_lock:
+        shared_data["tracked_objects"] = {}
+        shared_data["previous_tracked_objects"] = {}
+        st.success("Detection counter reset!")
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
@@ -181,38 +197,36 @@ def generate_object_id(bbox, class_name):
 
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     try:
-        # Initialize FPS counter in session state
-        if 'fps_counter' not in st.session_state:
-            st.session_state.fps_counter = {
-                'last_time': time.time(),
-                'frame_count': 0,
-                'current_fps': 0
-            }
-        
+        # Initialize FPS counter in shared_data
+        with data_lock:
+            if "fps_counter" not in shared_data:
+                shared_data["fps_counter"] = {
+                    "last_time": time.time(),
+                    "frame_count": 0,
+                    "current_fps": 0
+                }
+
         # Update FPS counter
-        counter = st.session_state.fps_counter
-        counter['frame_count'] += 1
-        elapsed = time.time() - counter['last_time']
-        
-        # Update FPS every second
-        if elapsed >= 1.0:
-            counter['current_fps'] = counter['frame_count'] / elapsed
-            counter['frame_count'] = 0
-            counter['last_time'] = time.time()
-        
+        with data_lock:
+            counter = shared_data["fps_counter"]
+            counter["frame_count"] += 1
+            elapsed = time.time() - counter["last_time"]
+
+            # Update FPS every second
+            if elapsed >= 1.0:
+                counter["current_fps"] = counter["frame_count"] / elapsed
+                counter["frame_count"] = 0
+                counter["last_time"] = time.time()
+
         # Convert frame to numpy array
         img = frame.to_ndarray(format="bgr24")
-        
-        # Show FPS if enabled
-        if SHOW_FPS:
-            fps_text = f"FPS: {counter['current_fps']:.1f}"
-            cv2.putText(img, fps_text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,255), 2)
-        
+
         # Run YOLO OBB inference
         results = model(img, conf=CONFIDENCE_THRESHOLD)
-        
+
         if results and len(results[0].obb) > 0:
             result = results[0]
+            new_objects_detected = False
             # Find coin for scaling
             highest_confidence = 0
             for detection in result.obb:
@@ -225,10 +239,16 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                         height_px = coin_xywhr[3]
                         avg_px_diameter = (width_px + height_px) / 2
                         if avg_px_diameter > 0:
-                            st.session_state.px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+                            px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+                            with data_lock:
+                                shared_data["px_to_mm_ratio"] = px_to_mm_ratio  # Save to shared_data
 
             # Use existing scaling ratio if no new coin is detected
-            px_to_mm_ratio = st.session_state.get("px_to_mm_ratio", None)
+            with data_lock:
+                if "px_to_mm_ratio" in shared_data:
+                    px_to_mm_ratio = shared_data["px_to_mm_ratio"]
+                else:
+                    px_to_mm_ratio = None
 
             # Draw OBB detections
             for detection in result.obb:
@@ -242,17 +262,10 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                 # Generate unique ID for the object
                 obj_id = generate_object_id(map(int, detection.xyxy[0]), class_name)
                 
-                # check whether tracked_objects are in session state
-                if 'tracked_objects' not in st.session_state:
-                    print("Initializing tracked_objects in session state")
-                    st.session_state.tracked_objects = {}
-                    
-    
-                if obj_id not in st.session_state.tracked_objects: 
-                    print(f"New object detected: {class_name} with ID: {obj_id}")
-                    st.session_state.tracked_objects[obj_id] = class_name
-                    print(f"Total tracked objects: {len(st.session_state.tracked_objects)}")
-
+                # Thread-safe update of shared_data
+                with data_lock:
+                    if obj_id not in shared_data["tracked_objects"]:
+                        shared_data["tracked_objects"][obj_id] = class_name
                 if not SHOW_DETECTIONS:
                     continue
                 
@@ -301,9 +314,9 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
                     endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
                                int(center[1] + 20 * math.sin(xywhr[4])))
                     cv2.line(img, center, endpoint, (255, 255, 255), 2)
-        print(f"The end of function--Total tracked objects: {len(st.session_state.tracked_objects)}")
+ 
         return av.VideoFrame.from_ndarray(img, format="bgr24")
-    
+
     except Exception as e:
         print(f"Processing error: {e}")
         return frame  # Return original frame if error occurs
@@ -350,6 +363,8 @@ def process_frame(frame, px_to_mm_ratio=None):
                     avg_px_diameter = (width_px + height_px) / 2
                     if avg_px_diameter > 0:
                         current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+                        with data_lock: 
+                            shared_data["px_to_mm_ratio"] = current_px_to_mm_ratio
 
     # Draw detections and track objects
     for detection in filtered_detections:
@@ -365,16 +380,18 @@ def process_frame(frame, px_to_mm_ratio=None):
             obj_id = generate_object_id((x1, y1, x2, y2), class_name)
             
             # Only count if not tracked before
-            if obj_id not in st.session_state.tracked_objects:
-                detected_objects.append({
-                    "class_id": class_id,
-                    "class_name": class_name,
-                    "bbox": (x1, y1, x2, y2),
-                    "confidence": float(confidence),
-                    "orientation": float(xywhr[4])
-                })
-                # Store the class name with the object ID
-                st.session_state.tracked_objects[obj_id] = class_name
+                           # Thread-safe update of shared_data
+            with data_lock:
+                if obj_id not in shared_data["tracked_objects"]:
+                    shared_data["tracked_objects"][obj_id] = class_name
+                    detected_objects.append({
+                        "class_id": class_id,
+                        "class_name": class_name,
+                        "bbox": (x1, y1, x2, y2),
+                        "confidence": float(confidence),
+                        "orientation": float(xywhr[4])
+                    })
+                    
 
             label_text = f"CatID:{class_id} {confidence:.2f}"
             if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
@@ -419,12 +436,13 @@ def process_frame(frame, px_to_mm_ratio=None):
 
 
 def reset_detection_summary():
-    st.session_state.tracked_objects = {}
-    with summary_placeholder:
-        st.empty()
+    with data_lock:
+        shared_data["tracked_objects"] = {}
+        shared_data["previous_tracked_objects"] = {}
+        
 
 # Main app
-st.title("🔍 Screw Detection and Measurement (YOLOv11 OBB)")
+st.title("🔍 Screw Detection and Measurement (YOLOv11n OBB)")
 
 # Create placeholders for content
 frame_placeholder = st.empty()
@@ -432,41 +450,44 @@ main_content = st.container()  # Main content goes here
 
 # Create placeholder at the bottom for summary
 st.markdown("---")  # Add divider
-summary_placeholder = st.container()  # Summary will be displayed here
+summary_placeholder = st.empty()  # Summary will be displayed here
 
 def show_summary():
     """Display the detection summary with counts for each category"""
-    with summary_placeholder:
-            st.empty()
+        
 
     if SHOW_SUMMARY:
         print("Showing summary...")
-        # Check if tracked_objects exists in session state
-        print("length of tracked_objects:", len(st.session_state.tracked_objects))
-        if not hasattr(st.session_state, 'tracked_objects'):
-            with summary_placeholder:
-                st.warning("No tracking data available. Please start detection to see the summary.")
+        with data_lock:
+            tracked_objects = shared_data.get("tracked_objects", {})
+            px_to_mm_ratio = shared_data.get("px_to_mm_ratio", None)
+
+        if not tracked_objects:
+            # Display a message if no objects are detected
+            with summary_placeholder.container():
+                st.info("No objects detected yet.")
             return
 
-        # Get all unique detected objects from session state
-        if st.session_state.tracked_objects:
-            # Filter out the coin class
-            filtered_objects = {
-                obj_id: class_name
-                for obj_id, class_name in st.session_state.tracked_objects.items()
-                if class_name != "10sen Coin"
-            }
-            
-            # Count objects by class name
-            class_counts = Counter(filtered_objects.values())
-            
-            summary_text = "### ✨ Unique Detections ✨\n"
-            
-            # Display total (excluding the coin)
-            total_objects = len(filtered_objects)
+
+        # Filter out the coin class
+        filtered_objects = {
+            obj_id: class_name
+            for obj_id, class_name in tracked_objects.items()
+            if class_name != "10sen Coin"
+        }
+        
+        # Count objects by class name
+        class_counts = Counter(filtered_objects.values())
+        
+        summary_text = "### ✨ Detections Summary ✨\n"
+
+        # Display total (excluding the coin)
+        total_objects = len(filtered_objects)
+        if total_objects != 0:
+          
+            summary_text += f'- **Px to mm ratio: {px_to_mm_ratio:.2f}**\n\n'
             summary_text += f"- **Total unique objects detected (excluding coin): {total_objects}**\n\n"
-            
-            # Display count for each category
+             # Display count for each category
             summary_text += "#### Breakdown by Category:\n"
             for class_name, count in sorted(class_counts.items()):
                 # Get color for this class
@@ -475,12 +496,12 @@ def show_summary():
                 
                 # Add colored category count
                 summary_text += f"- <span style='color:{color_hex}'><b>{class_name}</b>: {count}</span>\n"
-            
-            with summary_placeholder:
-                st.markdown(summary_text, unsafe_allow_html=True)
         else:
-            with summary_placeholder:
-                st.info("No objects detected yet.")
+            summary_text += "- **No unique objects detected (excluding coin)**\n\n"
+        
+        with summary_placeholder.container():
+            st.markdown(summary_text, unsafe_allow_html=True)
+ 
 
 if input_method == "Upload Image":
     reset_detection_summary()  # Clear summary
@@ -573,9 +594,10 @@ elif input_method == "Upload Video":
             show_summary()
 
 elif input_method == "Webcam (Live Camera)":
-    # reset_detection_summary()  # Clear summary
     with main_content:
         st.subheader("Live Camera Detection")
+        fps_placeholder = st.empty() 
+
         webrtc_ctx = webrtc_streamer(
             key="screw-detection",
             mode=WebRtcMode.SENDRECV,
@@ -591,10 +613,23 @@ elif input_method == "Webcam (Live Camera)":
             },
             async_processing=True
         )
+    # Initialize previous_tracked_objects to track changes
+    previous_tracked_objects = {}
 
-        print(f" After frame ---Total tracked objects: {len(st.session_state.tracked_objects)}")
-        # Periodically update the summary
-        while webrtc_ctx.state.playing:
-            print(f"In printing -- Total tracked objects: {len(st.session_state.tracked_objects)}")
-            show_summary()  # Call the summary function to update the UI
-            time.sleep(1)  # Update every second
+    # Periodically update the summary
+    while webrtc_ctx.state.playing:
+        # Use thread-safe access to shared_data
+        with data_lock:
+            tracked_objects = shared_data.get("tracked_objects", {})
+            fps = shared_data["fps_counter"]["current_fps"]
+     
+        if SHOW_FPS:
+            fps_placeholder.write(f"### Current FPS: {fps:.1f}")
+        # Check if there are changes in the tracked objects
+        if tracked_objects != previous_tracked_objects:
+            with data_lock:
+                previous_tracked_objects = tracked_objects.copy()  # Update the previous state
+            
+        show_summary()  # Call the summary function to update the UI
+
+        time.sleep(1)  # Update every second
