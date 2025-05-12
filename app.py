@@ -54,7 +54,7 @@ LABEL_FONT_SIZE = 20
 BORDER_WIDTH = 3
 
 # Load YOLO model
-model = YOLO("yolo11-obb12classes.pt")
+model = YOLO("yolo11-obb_deploy.pt")
 
 
 
