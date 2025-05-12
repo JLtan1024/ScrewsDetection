@@ -53,12 +53,6 @@ Evaluation results are available in the Kaggle group under the `Results` section
 
 You must join the Kaggle group to access datasets and notebooks.
 
-### Join the Group
-
-1. Sign up at [Kaggle](https://www.kaggle.com) if you don’t have an account.
-2. Click the link below to request access to the group:  
-   👉 [Join Kaggle Group](https://www.kaggle.com/groups/imageasg/pending-invite/67CCC9AC-AB2B-4231-8BE2-5AA58AF024ED)
-
 ### Once joined, you'll get access to:
 
 - ✅ **Training Notebooks**
