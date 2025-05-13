@@ -56,12 +56,12 @@ BORDER_WIDTH = 3
 # Load YOLO model
 model = YOLO("yolo11-obb12classes.pt")
 
-
+# Initialize ByteTrack tracker
+byte_tracker = sv.ByteTrack(track_thresh=0.25, track_buffer=30, match_thresh=0.8, frame_rate=30)
 
 # Shared data and lock for thread safety
 shared_data = {
     "tracked_objects": {},
-    "previous_tracked_objects": {},
     "fps_counter": {
         "last_time": time.time(),
         "frame_count": 0,
@@ -77,28 +77,28 @@ with st.sidebar:
     st.header("Settings")
     input_method = st.radio(
         "Input Source",
-        ("Webcam (Live Camera)", "Upload Image", "Upload Video"),
+        ("Webcam (Live Tracking)", "Upload Image", "Upload Video"),
         index=0
     )
     IOU_THRESHOLD = st.slider("IoU Threshold (NMS)", 0.0, 1.0, 0.7, step=0.05)
     CONFIDENCE_THRESHOLD = st.slider("Confidence Threshold", 0.0, 1.0, 0.5, step=0.05)
-    
-    if input_method == "Webcam (Live Camera)":
+
+    if input_method == "Webcam (Live Tracking)":
         WEBCAM_WIDTH = st.slider("Webcam Width", 320, 1920, 640, step=160)
         WEBCAM_HEIGHT = st.slider("Webcam Height", 240, 1080, 480, step=120)
         SHOW_FPS = st.checkbox("Show FPS", value=True)
-    
+
     SHOW_DETECTIONS = st.checkbox("Show Detections", value=True)
     SHOW_SUMMARY = st.checkbox("Show Summary", value=True)
     SHOW_ORIENTATION = st.checkbox("Show Orientation", value=True)
-    RESET_COUNTER = st.button("Reset Detection Counter")
+    RESET_COUNTER = st.button("Reset Tracking Counter")
 
 # Reset counter if button pressed
 if RESET_COUNTER:
     with data_lock:
         shared_data["tracked_objects"] = {}
-        shared_data["previous_tracked_objects"] = {}
-        st.success("Detection counter reset!")
+        st.success("Tracking counter reset!")
+    byte_tracker.reset()
 
 def get_text_size(draw, text, font):
     if hasattr(draw, 'textbbox'):
@@ -112,11 +112,11 @@ def xywhr_to_corners(xywhr):
     x, y, w, h, r = xywhr
     cos_r = math.cos(r)
     sin_r = math.sin(r)
-    
+
     # Calculate half width and height
     half_w = w / 2
     half_h = h / 2
-    
+
     # Calculate the four corners relative to center
     corners = np.array([
         [-half_w, -half_h],
@@ -124,19 +124,19 @@ def xywhr_to_corners(xywhr):
         [half_w, half_h],
         [-half_w, half_h]
     ])
-    
+
     # Rotate the corners
     rotation_matrix = np.array([
         [cos_r, -sin_r],
         [sin_r, cos_r]
     ])
-    
+
     rotated_corners = np.dot(corners, rotation_matrix.T)
-    
+
     # Translate corners to absolute position
     rotated_corners[:, 0] += x
     rotated_corners[:, 1] += y
-    
+
     return rotated_corners.astype(int)
 
 def non_max_suppression(detections, iou_threshold):
@@ -190,11 +190,6 @@ def non_max_suppression(detections, iou_threshold):
 
     return [detections[i] for i in keep_indices]
 
-def generate_object_id(bbox, class_name):
-    """Generate a unique ID based on bbox and class"""
-    x1, y1, x2, y2 = map(int, bbox)
-    return hashlib.md5(f"{x1}{y1}{x2}{y2}{class_name}".encode()).hexdigest()
-
 def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
     try:
         # Initialize FPS counter in shared_data
@@ -224,120 +219,69 @@ def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
         # Run YOLO OBB inference
         results = model(img, conf=CONFIDENCE_THRESHOLD)
 
+        detections = []
         if results and len(results[0].obb) > 0:
             result = results[0]
-            new_objects_detected = False
-            # Find coin for scaling
-            highest_confidence = 0
-            for detection in result.obb:
-                if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
-                    confidence = detection.conf[0]
-                    if confidence > highest_confidence:
-                        highest_confidence = confidence
-                        coin_xywhr = detection.xywhr[0].cpu().numpy()
-                        width_px = coin_xywhr[2]
-                        height_px = coin_xywhr[3]
-                        avg_px_diameter = (width_px + height_px) / 2
-                        if avg_px_diameter > 0:
-                            px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                            with data_lock:
-                                shared_data["px_to_mm_ratio"] = px_to_mm_ratio  # Save to shared_data
+            xyxy = result.xyxy.cpu().numpy()
+            confidence = result.conf.cpu().numpy()
+            class_ids = result.cls.cpu().numpy().astype(int)
 
-            # Use existing scaling ratio if no new coin is detected
-            with data_lock:
-                if "px_to_mm_ratio" in shared_data:
-                    px_to_mm_ratio = shared_data["px_to_mm_ratio"]
-                else:
-                    px_to_mm_ratio = None
+            for i in range(len(xyxy)):
+                detections.append(sv.Detection(
+                    xyxy=np.array([xyxy[i]]),
+                    confidence=np.array([confidence[i]]),
+                    class_id=np.array([class_ids[i]])
+                ))
 
-            # Draw OBB detections
-            for detection in result.obb:
-                # Get OBB detection info
-                xywhr = detection.xywhr[0].cpu().numpy()
-                class_id = int(detection.cls[0])
-                confidence = float(detection.conf[0])
-                class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
+        detections = sv.Detections.merge(detections)
+
+        # Update tracker with current detections
+        tracked_detections = byte_tracker.update_with_detections(scene=img, detections=detections)
+
+        tracked_objects_frame = {}
+        if tracked_detections is not None:
+            for i, (xyxy, confidence, class_id, tracker_id) in enumerate(tracked_detections):
+                class_name = CLASS_NAMES.get(int(class_id), f"Class {int(class_id)}")
                 color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
-                
-                # Generate unique ID for the object
-                obj_id = generate_object_id(map(int, detection.xyxy[0]), class_name)
-                
-                # Thread-safe update of shared_data
-                with data_lock:
-                    if obj_id not in shared_data["tracked_objects"]:
-                        shared_data["tracked_objects"][obj_id] = class_name
-                if not SHOW_DETECTIONS:
-                    continue
-                
-                # Convert xywhr to four corner points
-                corners = xywhr_to_corners(xywhr)
-                
-                # Draw rotated rectangle
-                for i in range(4):
-                    start = tuple(corners[i].astype(int))
-                    end = tuple(corners[(i + 1) % 4].astype(int))
-                    cv2.line(img, start, end, color, 2)
-                
-                # Draw label
-                label = f"CatID:{class_id} {confidence:.2f}"
-                if class_id == COIN_CLASS_ID and px_to_mm_ratio:
-                    diameter_px = (xywhr[2] + xywhr[3]) / 2
-                    diameter_mm = diameter_px * px_to_mm_ratio
-                    label += f", Dia: {diameter_mm:.2f}mm"
-                elif class_id != COIN_CLASS_ID and px_to_mm_ratio:
-                    length_px = max(xywhr[2], xywhr[3])
-                    length_mm = length_px * px_to_mm_ratio
-                    label += f", Length: {length_mm:.2f}mm"
-                elif class_id != COIN_CLASS_ID:
-                    label += ", Length: N/A (No Coin)"
-                elif class_id == COIN_CLASS_ID:
-                    label += ", Dia: N/A (No Ratio)"
 
-                (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                # Store tracked objects with their IDs
+                tracked_objects_frame[int(tracker_id)] = class_name
 
-                # Label background
-                label_bg = (corners[0][0], corners[0][1] - text_height - 10,
-                           corners[0][0] + text_width + 5, corners[0][1])
-                cv2.rectangle(img, 
-                            (int(label_bg[0]), int(label_bg[1])),
-                            (int(label_bg[2]), int(label_bg[3])),
-                            color, -1)
-                
-                # Label text
-                cv2.putText(img, label, 
-                          (int(corners[0][0] + 2), int(corners[0][1] - 5)),
-                          cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                
-                # Draw orientation if enabled
-                if SHOW_ORIENTATION:
-                    center = (int(xywhr[0]), int(xywhr[1]))
-                    endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
-                               int(center[1] + 20 * math.sin(xywhr[4])))
-                    cv2.line(img, center, endpoint, (255, 255, 255), 2)
- 
+                if SHOW_DETECTIONS:
+                    # Convert xyxy to integer coordinates
+                    x1, y1, x2, y2 = map(int, xyxy[0])
+                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                    label = f"{class_name} ID:{int(tracker_id)}"
+                    (text_width, text_height), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                    cv2.rectangle(img, (x1, y1 - text_height - 5), (x1 + text_width + 5, y1), color, -1)
+                    cv2.putText(img, label, (x1 + 2, y1 - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+            # Find coin for scaling based on the first tracked coin
+            with data_lock:
+                shared_data["tracked_objects"] = tracked_objects_frame
+                if "px_to_mm_ratio" not in shared_data:
+                    for xyxy, confidence, class_id, tracker_id in tracked_detections:
+                        if int(class_id) == COIN_CLASS_ID:
+                            x1, y1, x2, y2 = map(int, xyxy[0])
+                            width_px = x2 - x1
+                            height_px = y2 - y1
+                            avg_px_diameter = (width_px + height_px) / 2
+                            if avg_px_diameter > 0:
+                                shared_data["px_to_mm_ratio"] = COIN_DIAMETER_MM / avg_px_diameter
+                                break
+
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
     except Exception as e:
         print(f"Processing error: {e}")
-        return frame  # Return original frame if error occurs
+        return frame
 
-
-    
 def process_frame(frame, px_to_mm_ratio=None):
     """Process a single frame and return annotated image and detection data"""
-    print("Processing frame...")
     results = model(frame, conf=CONFIDENCE_THRESHOLD)
-    print(f"Model inference completed")
-    if not results:
-        print("No results found")
-        return frame, [], px_to_mm_ratio
-    print(f"Found {len(results)} results")
-    result = results[0]
-    filtered_detections = non_max_suppression(result.obb, IOU_THRESHOLD)
-    print(f"Filtered {len(filtered_detections)} detections after NMS")
     pil_image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(pil_image)
-    
+
     try:
         font = ImageFont.truetype("arial.ttf", LABEL_FONT_SIZE)
     except:
@@ -347,90 +291,59 @@ def process_frame(frame, px_to_mm_ratio=None):
 
     detected_objects = []
     current_px_to_mm_ratio = px_to_mm_ratio
-    
-    # Find coin for scaling
-    # if two coin detected, use the higher confidence one
+
     if current_px_to_mm_ratio is None:
-        highest_confidence = 0
-        for detection in filtered_detections:
+        for detection in results[0].obb:
             if len(detection.cls) > 0 and int(detection.cls[0]) == COIN_CLASS_ID and len(detection.xywhr) > 0:
+                coin_xywhr = detection.xywhr[0].cpu().numpy()
+                width_px = coin_xywhr[2]
+                height_px = coin_xywhr[3]
+                avg_px_diameter = (width_px + height_px) / 2
+                if avg_px_diameter > 0:
+                    current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
+                    break
+
+    if results and len(results[0].obb) > 0:
+        for detection in results[0].obb:
+            if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
+                class_id = int(detection.cls[0])
                 confidence = detection.conf[0]
-                if confidence > highest_confidence:
-                    highest_confidence = confidence
-                    coin_xywhr = detection.xywhr[0].cpu().numpy()
-                    width_px = coin_xywhr[2]
-                    height_px = coin_xywhr[3]
-                    avg_px_diameter = (width_px + height_px) / 2
-                    if avg_px_diameter > 0:
-                        current_px_to_mm_ratio = COIN_DIAMETER_MM / avg_px_diameter
-                        with data_lock: 
-                            shared_data["px_to_mm_ratio"] = current_px_to_mm_ratio
+                xywhr = detection.xywhr[0].cpu().numpy()
+                x1, y1, x2, y2 = map(int, detection.xyxy[0])
+                class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
+                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
 
-    # Draw detections and track objects
-    for detection in filtered_detections:
-        if len(detection.cls) > 0 and len(detection.xywhr) > 0 and len(detection.xyxy) > 0:
-            class_id = int(detection.cls[0])
-            confidence = detection.conf[0]
-            xywhr = detection.xywhr[0].cpu().numpy()
-            x1, y1, x2, y2 = map(int, detection.xyxy[0])
-            class_name = CLASS_NAMES.get(class_id, f"Class {int(class_id)}")
-            color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+                label_text = f"CatID:{class_id} {confidence:.2f}"
+                if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
+                    diameter_px = (xywhr[2] + xywhr[3]) / 2
+                    diameter_mm = diameter_px * current_px_to_mm_ratio
+                    label_text += f", Dia: {diameter_mm:.2f}mm"
+                elif class_id != COIN_CLASS_ID and current_px_to_mm_ratio:
+                    length_px = max(xywhr[2], xywhr[3])
+                    length_mm = length_px * current_px_to_mm_ratio
+                    label_text += f", Length: {length_mm:.2f}mm"
+                elif class_id != COIN_CLASS_ID:
+                    label_text += ", Length: N/A (No Coin)"
+                elif class_id == COIN_CLASS_ID:
+                    label_text += ", Dia: N/A (No Ratio)"
 
-            # Generate unique ID for the object
-            obj_id = generate_object_id((x1, y1, x2, y2), class_name)
-            
-            # Only count if not tracked before
-                           # Thread-safe update of shared_data
-            with data_lock:
-                if obj_id not in shared_data["tracked_objects"]:
-                    shared_data["tracked_objects"][obj_id] = class_name
-                    detected_objects.append({
-                        "class_id": class_id,
-                        "class_name": class_name,
-                        "bbox": (x1, y1, x2, y2),
-                        "confidence": float(confidence),
-                        "orientation": float(xywhr[4])
-                    })
-                    
-
-            label_text = f"CatID:{class_id} {confidence:.2f}"
-            if class_id == COIN_CLASS_ID and current_px_to_mm_ratio:
-                diameter_px = (xywhr[2] + xywhr[3]) / 2
-                diameter_mm = diameter_px * current_px_to_mm_ratio
-                label_text += f", Dia: {diameter_mm:.2f}mm"
-            elif class_id != COIN_CLASS_ID and current_px_to_mm_ratio:
-                length_px = max(xywhr[2], xywhr[3])
-                length_mm = length_px * current_px_to_mm_ratio
-                label_text += f", Length: {length_mm:.2f}mm"
-            elif class_id != COIN_CLASS_ID:
-                label_text += ", Length: N/A (No Coin)"
-            elif class_id == COIN_CLASS_ID:
-                label_text += ", Dia: N/A (No Ratio)"
-
-            if SHOW_DETECTIONS:
-                # Get OBB corners
-                corners = xywhr_to_corners(xywhr)
-                
-                # Draw rotated rectangle
-                for i in range(4):
-                    start_point = tuple(corners[i])
-                    end_point = tuple(corners[(i + 1) % 4])
-                    draw.line([start_point, end_point], fill=color, width=BORDER_WIDTH)
-                
-                # Draw orientation indicator if enabled
-                if SHOW_ORIENTATION:
-                    center = (int(xywhr[0]), int(xywhr[1]))
-                    endpoint = (int(center[0] + 20 * math.cos(xywhr[4])), 
-                                int(center[1] + 20 * math.sin(xywhr[4])))
-                    draw.line([center, endpoint], fill=(255, 255, 255), width=2)
-                
-                # Draw label
-                text_width, text_height = get_text_size(draw, label_text, font)
-                label_background = [(corners[0][0], corners[0][1] - text_height - 5),
-                                  (corners[0][0] + text_width + 5, corners[0][1])]
-                draw.rectangle(label_background, fill=color)
-                draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3), 
-                          label_text, fill=(255, 255, 255), font=font)
+                if SHOW_DETECTIONS:
+                    corners = xywhr_to_corners(xywhr)
+                    for i in range(4):
+                        start_point = tuple(corners[i])
+                        end_point = tuple(corners[(i + 1) % 4])
+                        draw.line([start_point, end_point], fill=color, width=BORDER_WIDTH)
+                    if SHOW_ORIENTATION:
+                        center = (int(xywhr[0]), int(xywhr[1]))
+                        endpoint = (int(center[0] + 20 * math.cos(xywhr[4])),
+                                    int(center[1] + 20 * math.sin(xywhr[4])))
+                        draw.line([center, endpoint], fill=(255, 255, 255), width=2)
+                    text_width, text_height = get_text_size(draw, label_text, font)
+                    label_background = [(corners[0][0], corners[0][1] - text_height - 5),
+                                      (corners[0][0] + text_width + 5, corners[0][1])]
+                    draw.rectangle(label_background, fill=color)
+                    draw.text((corners[0][0] + 2, corners[0][1] - text_height - 3),
+                              label_text, fill=(255, 255, 255), font=font)
 
     return np.array(pil_image), detected_objects, current_px_to_mm_ratio
 
@@ -438,8 +351,55 @@ def process_frame(frame, px_to_mm_ratio=None):
 def reset_detection_summary():
     with data_lock:
         shared_data["tracked_objects"] = {}
-        shared_data["previous_tracked_objects"] = {}
-        
+
+def show_summary():
+    """Display the detection summary with counts for each category"""
+
+    if SHOW_SUMMARY:
+        with data_lock:
+            tracked_objects = shared_data.get("tracked_objects", {})
+            px_to_mm_ratio = shared_data.get("px_to_mm_ratio", None)
+
+        if not tracked_objects:
+            # Display a message if no objects are detected
+            with summary_placeholder.container():
+                st.info("No objects detected yet.")
+            return
+
+        # Filter out the coin class
+        filtered_objects = {
+            obj_id: class_name
+            for obj_id, class_name in tracked_objects.items()
+            if class_name != "10sen Coin"
+        }
+
+        # Count objects by class name
+        class_counts = Counter(filtered_objects.values())
+
+        summary_text = "### ✨ Detections Summary ✨\n"
+
+        # Display total (excluding the coin)
+        total_objects = len(filtered_objects)
+        if total_objects != 0:
+
+            summary_text += f'- **Px to mm ratio: {px_to_mm_ratio:.2f}**\n\n'
+            summary_text += f"- **Total unique objects detected (excluding coin): {total_objects}**\n\n"
+            # Display count for each category
+            summary_text += "#### Breakdown by Category:\n"
+            for class_name, count in sorted(class_counts.items()):
+                # Get color for this class
+                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
+                color_hex = "#{:02x}{:02x}{:02x}".format(*color)
+
+                # Add colored category count
+                summary_text += f"- <span style='color:{color_hex}'><b>{class_name}</b>: {count}</span>\n"
+        else:
+            summary_text += "- **No unique objects detected (excluding coin)**\n\n"
+
+        with summary_placeholder.container():
+            st.markdown(summary_text, unsafe_allow_html=True)
+
+
 
 # Main app
 st.title("🔍 Screw Detection and Measurement (YOLOv11n OBB)")
@@ -451,57 +411,6 @@ main_content = st.container()  # Main content goes here
 # Create placeholder at the bottom for summary
 st.markdown("---")  # Add divider
 summary_placeholder = st.empty()  # Summary will be displayed here
-
-def show_summary():
-    """Display the detection summary with counts for each category"""
-        
-
-    if SHOW_SUMMARY:
-        print("Showing summary...")
-        with data_lock:
-            tracked_objects = shared_data.get("tracked_objects", {})
-            px_to_mm_ratio = shared_data.get("px_to_mm_ratio", None)
-
-        if not tracked_objects:
-            # Display a message if no objects are detected
-            with summary_placeholder.container():
-                st.info("No objects detected yet.")
-            return
-
-
-        # Filter out the coin class
-        filtered_objects = {
-            obj_id: class_name
-            for obj_id, class_name in tracked_objects.items()
-            if class_name != "10sen Coin"
-        }
-        
-        # Count objects by class name
-        class_counts = Counter(filtered_objects.values())
-        
-        summary_text = "### ✨ Detections Summary ✨\n"
-
-        # Display total (excluding the coin)
-        total_objects = len(filtered_objects)
-        if total_objects != 0:
-          
-            summary_text += f'- **Px to mm ratio: {px_to_mm_ratio:.2f}**\n\n'
-            summary_text += f"- **Total unique objects detected (excluding coin): {total_objects}**\n\n"
-             # Display count for each category
-            summary_text += "#### Breakdown by Category:\n"
-            for class_name, count in sorted(class_counts.items()):
-                # Get color for this class
-                color = CATEGORY_COLORS.get(class_name, (0, 255, 0))
-                color_hex = "#{:02x}{:02x}{:02x}".format(*color)
-                
-                # Add colored category count
-                summary_text += f"- <span style='color:{color_hex}'><b>{class_name}</b>: {count}</span>\n"
-        else:
-            summary_text += "- **No unique objects detected (excluding coin)**\n\n"
-        
-        with summary_placeholder.container():
-            st.markdown(summary_text, unsafe_allow_html=True)
- 
 
 if input_method == "Upload Image":
     reset_detection_summary()  # Clear summary
@@ -593,26 +502,22 @@ elif input_method == "Upload Video":
             cap.release()
             show_summary()
 
-elif input_method == "Webcam (Live Camera)":
+elif input_method == "Webcam (Live Tracking)":
     with main_content:
-        st.subheader("Live Camera Detection")
-        fps_placeholder = st.empty() 
+        st.subheader("Live Camera Tracking")
+        fps_placeholder = st.empty()
 
         webrtc_ctx = webrtc_streamer(
             key="screw-detection",
             mode=WebRtcMode.SENDRECV,
             video_frame_callback=video_frame_callback,
             media_stream_constraints={
-                "video": {
-                    "width": {"ideal": WEBCAM_WIDTH},
-                    "height": {"ideal": WEBCAM_HEIGHT},
-                    "frameRate": {"ideal": 30},
-                    "facingMode": {"ideal": "environment"}
-                },
+                "video": {"width": {"ideal": WEBCAM_WIDTH}, "height": {"ideal": WEBCAM_HEIGHT}, "frameRate": {"ideal": 30}, "facingMode": {"ideal": "environment"}},
                 "audio": False
             },
             async_processing=True
         )
+
     # Initialize previous_tracked_objects to track changes
     previous_tracked_objects = {}
 
@@ -622,14 +527,15 @@ elif input_method == "Webcam (Live Camera)":
         with data_lock:
             tracked_objects = shared_data.get("tracked_objects", {})
             fps = shared_data["fps_counter"]["current_fps"]
-     
+
         if SHOW_FPS:
             fps_placeholder.write(f"### Current FPS: {fps:.1f}")
         # Check if there are changes in the tracked objects
         if tracked_objects != previous_tracked_objects:
             with data_lock:
                 previous_tracked_objects = tracked_objects.copy()  # Update the previous state
-            
+
         show_summary()  # Call the summary function to update the UI
 
         time.sleep(1)  # Update every second
+
