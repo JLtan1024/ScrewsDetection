@@ -57,7 +57,7 @@ BORDER_WIDTH = 3
 model = YOLO("yolo11-obb12classes.pt")
 
 # Initialize ByteTrack tracker
-byte_tracker = sv.ByteTrack(track_thresh=0.25, track_buffer=30, match_thresh=0.8, frame_rate=30)
+byte_tracker = sv.ByteTrack()
 
 # Shared data and lock for thread safety
 shared_data = {
