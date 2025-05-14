@@ -485,7 +485,8 @@ def show_summary():
         total_objects = len(filtered_objects)
         if total_objects != 0:
           
-            summary_text += f'- **Px to mm ratio: {px_to_mm_ratio:.2f}**\n\n'
+            ratio_text = f"{px_to_mm_ratio:.2f}" if px_to_mm_ratio is not None else "N/A (No coin detected)"
+            summary_text += f'- **Px to mm ratio: {ratio_text}**\n\n'
             summary_text += f"- **Total unique objects detected (excluding coin): {total_objects}**\n\n"
              # Display count for each category
             summary_text += "#### Breakdown by Category:\n"
